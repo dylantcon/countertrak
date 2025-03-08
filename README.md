@@ -376,3 +376,68 @@ class PayloadExtractor:
             self.player_states[new_player.steam_id] = new_player
 PS C:\Users\dylan\OneDrive\Desktop\counterTrak_project\csgo-gsi-python\csgo-gsi-python>
 ```
+## Building a Scalable Game State Tracking System for CounterTrak
+Based on our project and goals, we think the ideal, pedagogically rigorous approach would be implementing an **asynchronous I/O architecture** using Python's `asyncio` framework. This approach will teach us:
+1. Modern Python concurrency patterns
+2. Event-driven programming
+3. Non-blocking I/O operations
+4. High-performance network programming
+5. Resource management under concurrent access
+### Top-Down Architecture Overview
+Here's the overall system we want to build:
+```
+┌────────────────┐     ┌───────────────────────────────────────────┐
+│  CS2 Client 1  │────▶│                                           │
+└────────────────┘     │                                           │
+                       │                                           │
+┌────────────────┐     │      Async HTTP Server                    │
+│  CS2 Client 2  │────▶│      (Payload Receiver)                   │
+└────────────────┘     │                                           │
+                       │                                           │
+┌────────────────┐     │                                           │
+│  CS2 Client N  │────▶│                                           │
+└────────────────┘     └───────────────┬───────────────────────────┘
+                                       │
+                                       ▼
+                       ┌───────────────────────────────────────────┐
+                       │                                           │
+                       │      Match/Player Manager                 │
+                       │      (Tracks active games)                │
+                       │                                           │
+                       └───────────────┬───────────────────────────┘
+                                       │
+                                       ▼
+           ┌───────────────────────────────────────────────────┐
+           │                                                   │
+┌──────────┴──────────┐   ┌──────────┴──────────┐   ┌──────────┴──────────┐
+│                     │   │                     │   │                     │
+│  Match Processor 1  │   │  Match Processor 2  │   │  Match Processor N  │
+│  (One per match)    │   │  (One per match)    │   │  (One per match)    │
+│                     │   │                     │   │                     │
+└──────────┬──────────┘   └──────────┬──────────┘   └──────────┬──────────┘
+           │                         │                         │
+           ▼                         ▼                         ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                                                                      │
+│                  Async Database Connection Pool                      │
+│                  (Persists match data)                               │
+│                                                                      │
+└──────────────────────────────────────────────────────────────────────┘
+```
+### System Components and Flow
+1. **Async HTTP Server:** Receives GSI payloads from multiple CS2 clients simultaneously
+2. **Match/Player Manager**: Creates and routes payloads to the appropriate match processor
+3. **Match Processors**: Process game state for individual matches, tracking round-based data
+4. **Database Connection Pool**: Provides efficient, non-blocking database access
+### Data Flow
+1. CS2 clients send GSI payloads via HTTP POST
+2. The server validates authentication and identifies which match the payload belongs to
+3. The Match Manager routes the payload to the appropriate Match Processor
+4. Match Processors accumulate data by round, processing complete rounds when they end
+5. Database operations occur asynchronously to avoid blocking the main processing flow
+### Why This Architecture Works Well for CounterTrak
+1. **Asynchronous Processing**: Handles many connections without creating a thread per connection
+2. **Match Isolation**: Each match's data is processed independently, avoiding cross-contamination
+3. **Round-Based Processing**: Aligns with game structure and optimizes database operations
+4. **Non-Blocking I/O**: Server remains responsive even under high load
+5. **Resource Efficiency**: Uses fewer system resources than thread-per-connection approaches

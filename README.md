@@ -1,7 +1,7 @@
 # counterTrak
 ## Introduction
 
-A project developed for the course _COP4710 Theory and Structure of Databases_. The goal of this semester-long project is to design and implement a web-based informatics application powered by a relational database management system (**RDBMS**). We have chosen PostgreSQL (**PSQL**) as our specific RDBMS service, powered by our own custom Python backend system. 
+A project developed for the course _COP4710 Theory and Structure of Databases_. The goal of this semester-long project is to design and implement a web-based informatics application powered by a relational database management system (**RDBMS**). We have chosen PostgreSQL (**PSQL**) as our specific RDBMS service, powered by our Django-based Python backend system.
 
 This application, `counterTrak`, is intended to act as a lightweight performance statistics tracker for players of Valve Corporation's highly-popular first-person-shooter title _Counter Strike 2_ (**CS2**), released September 27, 2023. Data collection is fulfilled through the utilization of CS2's native Game State Integration (**GSI**) system, developed and maintained by Valve. CS2 GSI is the optimal approach for this project's scope, as it enables developers to collect relevant game-state metadata contained in JavaScript Object Notation (**JSON**) files transmitted to a specified Hyper-Text Transfer Protocol (**HTTP**) POST endpoint. These HTTP POST requests are relayed regularly, and their frequency may be configured relative to the needs of the application. For more information, please consult Valve's full official documentation for CS2 GSI: https://developer.valvesoftware.com/wiki/Counter-Strike:_Global_Offensive_Game_State_Integration
 ## Market Differentiation

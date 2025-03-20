@@ -51,7 +51,7 @@ Below is the textual implementation of the `counterTrak` relational schema, whic
 ### SQL Implementation
 ---
 In addition to the textual representation of the `counterTrak` relational schema, we have also provided the SQL implementation in accordance to the attributes, entities, and relations seen in the ER diagram. The SQL syntax seen below is compatible with PostgreSQL, which is our preferred RDBMS provider:
-```postgresql
+```sql
 -- Users table (for counterTrak users, not CS2 users)
 CREATE TABLE Users(
 	user_id SERIAL PRIMARY KEY,

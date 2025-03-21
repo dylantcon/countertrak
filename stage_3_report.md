@@ -166,10 +166,44 @@ CREATE INDEX idx_player_stats_match ON player_match_stats(match_id);
 ```
 ## Technology Stack
 ### RDBMS Provider
-### Backend System
-### Frontend System
-## Data Collection
+PostgreSQL will serve as our primary RDBMS provider for the CounterTrak application. PostgreSQL's robust support for complex queries, transaction integrity, and JSON data handling makes it ideal for processing and analyzing the game state data from CS2. The system will utilize PostgreSQL's advanced features such as:
 
+- UUID generation for unique match identifiers
+- JSON functions for preliminary payload processing
+- Transactional integrity for ensuring consistent game state transitions
+- Indexing capabilities for optimizing performance-critical queries
+- Connection pooling to handle concurrent game client connections
+
+Our schema has been designed specifically with PostgreSQL's capabilities in mind, particularly leveraging its support for composite primary keys and foreign key constraints to maintain data integrity across related tables.
+
+### Backend System
+The backend system will be implemented using Django with Python, providing a robust framework for handling HTTP requests, database interactions, and business logic. Django's ORM will facilitate the mapping between our PostgreSQL database and Python objects, simplifying data manipulation and query construction. Key components include:
+
+1. **Asynchronous HTTP Server**: Implementing Python's `asyncio` framework to handle multiple concurrent CS2 GSI HTTP POST requests efficiently.
+2. **Django REST Framework**: For developing the API endpoints that will serve player statistics and match data to the frontend.
+3. **Match/Player Manager**: Built as a Django service to route payloads to appropriate match processors.
+4. **Authentication System**: Integrating Django's authentication with Steam OAuth for player verification.
+5. **Data Processing Pipeline**: Converting raw GSI payloads into normalized database records using our existing `PayloadExtractor` class, enhanced to work within Django's framework.
+
+The existing proof-of-concept server implementation will be refactored to integrate with Django's async capabilities, replacing the current threading approach with a more scalable asynchronous model.
+
+### Frontend System
+The frontend will be developed as a responsive web application using modern JavaScript frameworks to provide an intuitive, data-rich interface for players to analyze their performance statistics. Our technology choices include:
+
+1. **React.js**: For building dynamic, component-based user interfaces with efficient DOM manipulation.
+2. **Chart.js**: For data visualization of player performance metrics.
+3. **Tailwind CSS**: For rapid UI development with a utility-first approach to styling.
+4. **Axios**: For handling API communications with the backend.
+5. **React Router**: For client-side routing between different views.
+
+The frontend will feature:
+- Player dashboards with performance summaries and trends
+- Detailed match analysis views with round-by-round breakdowns
+- Weapon effectiveness comparisons
+- Economic analysis tools
+- Responsive design for both desktop and mobile access
+
+## Data Collection
 ### Methods
 Data Collection will be facilitated through CS2's Game State Integration (GSI) system as documented by Valve. The process involves:
 1. Creating a GSI configuration file (`gamestate_integration_countertrak.cfg`) in the CS2 game directory that specifies:
@@ -186,6 +220,101 @@ Data Collection will be facilitated through CS2's Game State Integration (GSI) s
 	- Only update database records when meaningful changes occur
 	- Use transactions to ensure data consistency
 The implementation will leverage the existing code from our proof-of-concept originally shared in the Stage 2 Report, with several changes. We'll also have to configure our system to support multi-threading, in order to handle many concurrent game clients forwarding HTTP POST requests to the server. This may involve rewriting significant amounts of said proof-of-concept to intermesh with the Django backend system we are to implement.
+
+### Data Sources
+Our application will collect data from the following sources:
+
+1. **Primary Game Data**: Directly from CS2 clients via the GSI system during live matches.
+2. **Steam API Integration**: For validating Steam IDs and retrieving basic player profile information.
+3. **Initial Test Data**: During development and testing phases, we will use:
+   - Controlled matches among development team members
+   - Simulated payloads based on recorded match data
+   - Semi-synthetic data to stress-test edge cases
+
+The data authenticity is guaranteed by its direct source - the CS2 game client - while our intelligent schema design allows us to maximize the insights we can derive from each piece of information we receive. Our dataset will initially be populated by both real and artificial players utilizing our system on public and private game servers.
+
 ## Logistics
 ### Labor Division
+The project will be divided into specialized components with team members assigned based on their expertise:
+
+1. **Database Implementation & Optimization (Dylan)**
+   - Implementing the PostgreSQL schema
+   - Database performance tuning
+   - Query optimization
+   - Data migration scripts
+
+2. **Backend Development (Zack)**
+   - Django application architecture
+   - Asynchronous HTTP server implementation
+   - API endpoint development
+   - PayloadExtractor integration with Django
+
+3. **Frontend Development (Dylan and Zack)**
+   - React component architecture
+   - UI/UX design implementation
+   - Data visualization development
+   - Responsive layout optimization
+
+4. **GSI Integration & Testing (Dylan and Zack)**
+   - GSI payload parsing and validation
+   - Match state reconstruction logic
+   - Event sequence analysis
+   - Performance testing
+
+5. **Deployment & DevOps (Dylan and Zack)**
+   - Development environment setup
+   - CI/CD pipeline configuration
+   - Production deployment preparation
+   - System monitoring implementation
+
+6. **Documentation & Project Management (Dylan and Zack)**
+   - API documentation
+   - User guides
+   - Installation instructions
+   - Progress tracking and milestone reporting
+
 ### Milestone-Based Timeline
+Our development timeline will be compressed into 5 weeks, with aggressive parallelization of tasks to meet project requirements:
+
+**Week 1: Foundation & Core Infrastructure**
+- Complete database schema implementation and PostgreSQL setup
+- Implement base Django project structure with ORM models
+- Set up development environments for all team members
+- Create initial React project structure with component architecture
+- Implement and test basic GSI payload receiver server
+- Begin HTTP server implementation with asyncio
+- Milestone Deliverable: Working database and server environments
+
+**Week 2: Data Processing & Backend Development**
+- Complete PayloadExtractor integration with Django ORM
+- Implement match state processing and player tracking
+- Develop authentication system with Steam integration
+- Create core API endpoints for match data
+- Begin implementation of player and match visualization components
+- Milestone Deliverable: Functional data pipeline from GSI to database
+
+**Week 3: Frontend Development & Integration**
+- Complete React frontend components for dashboard and match view
+- Implement data visualization for player statistics
+- Develop weapon effectiveness analysis tools
+- Create economic analysis visualizations
+- Integrate frontend with backend API
+- Milestone Deliverable: Working frontend with live data display
+
+**Week 4: Feature Completion & Testing**
+- Implement advanced analytics algorithms
+- Add performance optimization for database queries
+- Create admin interface for system monitoring
+- Conduct initial user testing with real matches
+- Fix critical bugs and performance issues
+- Milestone Deliverable: Feature-complete application with testing results
+
+**Week 5: Refinement & Final Delivery**
+- Address feedback from testing
+- Complete all documentation including user guides
+- Perform final optimization and code cleanup
+- Prepare final presentation materials
+- Package application for deployment
+- Milestone Deliverable: Final project with documentation and presentation
+
+Each week's milestones will be tracked through GitHub issues and project boards to ensure transparency and accountability, with daily standups to address any blocking issues quickly.

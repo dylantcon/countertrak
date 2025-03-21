@@ -166,10 +166,44 @@ CREATE INDEX idx_player_stats_match ON player_match_stats(match_id);
 ```
 ## Technology Stack
 ### RDBMS Provider
-### Backend System
-### Frontend System
-## Data Collection
+PostgreSQL will serve as our primary RDBMS provider for the CounterTrak application. PostgreSQL's robust support for complex queries, transaction integrity, and JSON data handling makes it ideal for processing and analyzing the game state data from CS2. The system will utilize PostgreSQL's advanced features such as:
 
+- UUID generation for unique match identifiers
+- JSON functions for preliminary payload processing
+- Transactional integrity for ensuring consistent game state transitions
+- Indexing capabilities for optimizing performance-critical queries
+- Connection pooling to handle concurrent game client connections
+
+Our schema has been designed specifically with PostgreSQL's capabilities in mind, particularly leveraging its support for composite primary keys and foreign key constraints to maintain data integrity across related tables.
+
+### Backend System
+The backend system will be implemented using Django with Python, providing a robust framework for handling HTTP requests, database interactions, and business logic. Django's ORM will facilitate the mapping between our PostgreSQL database and Python objects, simplifying data manipulation and query construction. Key components include:
+
+1. **Asynchronous HTTP Server**: Implementing Python's `asyncio` framework to handle multiple concurrent CS2 GSI HTTP POST requests efficiently.
+2. **Django REST Framework**: For developing the API endpoints that will serve player statistics and match data to the frontend.
+3. **Match/Player Manager**: Built as a Django service to route payloads to appropriate match processors.
+4. **Authentication System**: Integrating Django's authentication with Steam OAuth for player verification.
+5. **Data Processing Pipeline**: Converting raw GSI payloads into normalized database records using our existing `PayloadExtractor` class, enhanced to work within Django's framework.
+
+The existing proof-of-concept server implementation will be refactored to integrate with Django's async capabilities, replacing the current threading approach with a more scalable asynchronous model.
+
+### Frontend System
+The frontend will be developed as a responsive web application using modern JavaScript frameworks to provide an intuitive, data-rich interface for players to analyze their performance statistics. Our technology choices include:
+
+1. **React.js**: For building dynamic, component-based user interfaces with efficient DOM manipulation.
+2. **Chart.js**: For data visualization of player performance metrics.
+3. **Tailwind CSS**: For rapid UI development with a utility-first approach to styling.
+4. **Axios**: For handling API communications with the backend.
+5. **React Router**: For client-side routing between different views.
+
+The frontend will feature:
+- Player dashboards with performance summaries and trends
+- Detailed match analysis views with round-by-round breakdowns
+- Weapon effectiveness comparisons
+- Economic analysis tools
+- Responsive design for both desktop and mobile access
+
+## Data Collection
 ### Methods
 Data Collection will be facilitated through CS2's Game State Integration (GSI) system as documented by Valve. The process involves:
 1. Creating a GSI configuration file (`gamestate_integration_countertrak.cfg`) in the CS2 game directory that specifies:

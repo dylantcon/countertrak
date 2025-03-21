@@ -33,21 +33,29 @@ Below is the textual implementation of the `counterTrak` relational schema, whic
 
 **User relation**:
 - user_id → email, password_hash
+
 **SteamAccount relation:**
 - steam_id → user_id, auth_token, player_name
+
 **Match relation:**
 - match_id → mode, map_name, start_timestamp, end_timestamp, rounds_played, team_ct_score, team_t_score
+
 **Round relation:**
 - (match_id, round_number) → phase, timestamp, winning_team, win_condition
+
 **PlayerRoundState relation:**
 - (match_id, round_number, steam_id) → health, armor, money, equip_value, round_kills
+
 **Weapon relation:**
 - weapon_id → name, type, max_clip
 - name → weapon_id (name is also a candidate key)
+
 **PlayerWeapon relation:**
 - (match_id, round_number, steam_id, weapon_id) → state, ammo_clip, ammo_reserve, paintkit
+
 **PlayerMatchStat relation:**
 - (steam_id, match_id) → kills, deaths, assists, mvps, score
+
 ### SQL Implementation
 ---
 In addition to the textual representation of the `counterTrak` relational schema, we have also provided the SQL implementation in accordance to the attributes, entities, and relations seen in the ER diagram. The SQL syntax seen below is compatible with PostgreSQL, which is our preferred RDBMS provider:
@@ -219,6 +227,7 @@ Data Collection will be facilitated through CS2's Game State Integration (GSI) s
 	- Track changes between states
 	- Only update database records when meaningful changes occur
 	- Use transactions to ensure data consistency
+
 The implementation will leverage the existing code from our proof-of-concept originally shared in the Stage 2 Report, with several changes. We'll also have to configure our system to support multi-threading, in order to handle many concurrent game clients forwarding HTTP POST requests to the server. This may involve rewriting significant amounts of said proof-of-concept to intermesh with the Django backend system we are to implement.
 
 ### Data Sources

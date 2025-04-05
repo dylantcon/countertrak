@@ -40,20 +40,43 @@ class PlayerState:
     match_assists: int
     match_mvps: int
     match_score: int
-    weapons: Dict[str, WeaponState] = field( default_factory=dict )
+    weapons: Dict[str, WeaponState] = field(default_factory=dict)
 
 class PayloadExtractor:
+    """
+    Extracts relevant data from CS2 GSI payloads.
+    Modified to work with the async architecture.
+    """
+    
     def __init__(self):
         self.current_match: Optional[MatchState] = None
         self.player_states: Dict[str, PlayerState] = {}
-        
+    
     def extract_match_state(self, payload: Dict) -> Optional[MatchState]:
-        if 'map' not in payload:
-            return None
+        """
+        Extract match state from a GSI payload.
+        
+        Args:
+            payload: The GSI payload
             
+        Returns:
+            A MatchState object, or None if match data couldn't be extracted
+        """
+        if 'map' not in payload or 'player' not in payload:
+            return None
+        
         map_data = payload['map']
+        player_data = payload['player']
+        
+        # Create a stable match ID that won't change during the match
+        map_name = map_data.get('name', 'unknown_map')
+        game_mode = map_data.get('mode', 'casual')  # Default to casual if not specified
+        steam_id = player_data.get('steamid', 'unknown_player')
+        
+        match_id = f"{map_name}_{game_mode}_{steam_id}"
+        
         return MatchState(
-            match_id=f"{map_data['name']}_{payload['provider']['timestamp']}",
+            match_id=match_id,
             mode=map_data['mode'],
             map_name=map_data['name'],
             phase=map_data['phase'],
@@ -62,23 +85,40 @@ class PayloadExtractor:
             team_t_score=map_data['team_t']['score'],
             timestamp=payload['provider']['timestamp']
         )
-
-
-    def extract_weapon_state( self, weapon_data: Dict ) -> WeaponState:
+    
+    def extract_weapon_state(self, weapon_data: Dict) -> WeaponState:
+        """
+        Extract weapon state from weapon data.
+        
+        Args:
+            weapon_data: Weapon data from the GSI payload
+            
+        Returns:
+            A WeaponState object
+        """
         return WeaponState(
             name=weapon_data["name"],
-            type=weapon_data.get( "type", "Other" ), # other is needed as default (zeus x11)
+            type=weapon_data.get("type", "Other"),  # other is needed as default (zeus x11)
             state=weapon_data["state"],
             ammo_clip=weapon_data.get("ammo_clip"),
             ammo_clip_max=weapon_data.get("ammo_clip_max"),
             ammo_reserve=weapon_data.get("ammo_reserve"),
             paintkit=weapon_data.get("paintkit", "default")
         )
-
+    
     def extract_player_state(self, payload: Dict) -> Optional[PlayerState]:
+        """
+        Extract player state from a GSI payload.
+        
+        Args:
+            payload: The GSI payload
+            
+        Returns:
+            A PlayerState object, or None if player data couldn't be extracted
+        """
         if 'player' not in payload or 'state' not in payload['player']:
             return None
-            
+        
         p = payload['player']
         state = p['state']
         stats = p.get('match_stats', {})
@@ -86,8 +126,8 @@ class PayloadExtractor:
         
         if 'weapons' in p:
             for key, data in p['weapons'].items():
-                weapons[key] = self.extract_weapon_state( data )
-
+                weapons[key] = self.extract_weapon_state(data)
+        
         return PlayerState(
             steam_id=p['steamid'],
             name=p['name'],
@@ -105,40 +145,56 @@ class PayloadExtractor:
             match_score=stats.get('score', 0),
             weapons=weapons
         )
-
-    def process_payload(self, payload: Dict):
+    
+    def process_payload(self, payload: Dict) -> None:
+        """
+        Process a GSI payload and update internal state.
+        
+        Args:
+            payload: The GSI payload
+        """
         match_state = self.extract_match_state(payload)
         if match_state:
             self.current_match = match_state
-
+        
         player_state = self.extract_player_state(payload)
         if player_state:
             self.player_states[player_state.steam_id] = player_state
-
-    def monitor_state_changes(self, payload: Dict):
+    
+    def monitor_state_changes(self, payload: Dict) -> None:
+        """
+        Monitor and log state changes between payloads.
+        
+        Args:
+            payload: The GSI payload
+        """
         # Process new state first
         new_match = self.extract_match_state(payload)
         new_player = self.extract_player_state(payload)
-    
+        
         # Then check for changes against newly updated state
         if new_player and new_player.steam_id in self.player_states:
             prev = self.player_states[new_player.steam_id]
-
+            
             # track non-weapon changes
-            basic_changes = {k: v for k,v in vars(new_player).items() 
-                             if k != 'weapons' and getattr( prev, k ) != v }
+            basic_changes = {
+                k: v for k, v in vars(new_player).items()
+                if k != 'weapons' and getattr(prev, k) != v
+            }
             if basic_changes:
                 logging.info(f"{new_player.name} ({new_player.steam_id}) delta: {basic_changes}")
-
+            
             for weapon_slot, new_weapon in new_player.weapons.items():
                 if weapon_slot in prev.weapons:
                     old_weapon = prev.weapons[weapon_slot]
-                    weapon_changes = { k: getattr( new_weapon, k )
-                                        for k in vars( new_weapon ).keys()
-                                        if getattr( old_weapon, k ) != getattr( new_weapon, k ) }
+                    weapon_changes = {
+                        k: getattr(new_weapon, k)
+                        for k in vars(new_weapon).keys()
+                        if getattr(old_weapon, k) != getattr(new_weapon, k)
+                    }
                     if weapon_changes:
-                        logging.info( f"{new_weapon.name} in slot {weapon_slot} delta: {weapon_changes}" )
-
+                        logging.info(f"{new_weapon.name} in slot {weapon_slot} delta: {weapon_changes}")
+        
         if new_match:
             self.current_match = new_match
         if new_player:

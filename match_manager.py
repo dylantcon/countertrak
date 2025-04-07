@@ -46,17 +46,29 @@ class MatchManager:
             payload: The GSI payload from CS2
         """
         try:
+            # extract match ID using provider.steamid (game client owner)
             match_id = self._extract_match_id(payload)
             
             if not match_id:
                 logging.warning("Could not extract match ID from payload")
                 return
+
+            # extract owner and player steamIDs for ownership context
+            owner_steam_id = payload.get('provider', {}).get('steamid')
+            player_steam_id = payload.get('player', {}).get('steamid')
+            player_name = payload.get('player', {}).get('name', 'unknown')
+
+            # determine if owner is playing or spectating
+            is_owner_playing = (owner_steam_id == player_steam_id)
+
+            if not is_owner_playing:
+                logging.debug(f"Client {owner_steam_id} is spectating {player_name} ({player_steam_id})")
             
-            # Get or create the match processor
-            processor = await self._get_or_create_processor(match_id)
+            # Get or create the match processor with owner context
+            processor = await self._get_or_create_processor(match_id, owner_steam_id)
             
             # Process the payload
-            await processor.process_payload(payload)
+            await processor.process_payload(payload, is_owner_playing)
             
             # Cleanup completed matches periodically
             await self._cleanup_completed_matches()
@@ -64,7 +76,7 @@ class MatchManager:
         except Exception as e:
             logging.error(f"Error processing payload: {str(e)}")
     
-    async def _get_or_create_processor(self, match_id: str) -> MatchProcessor:
+    async def _get_or_create_processor(self, match_id: str, owner_steam_id: str) -> MatchProcessor:
         """
         Get an existing match processor or create a new one if it doesn't exist.
         
@@ -72,6 +84,7 @@ class MatchManager:
         
         Args:
             match_id: The match identifier
+            owner_steam_id: The steam ID of the client owner
             
         Returns:
             The match processor for the specified match
@@ -86,15 +99,17 @@ class MatchManager:
                 return self.match_processors[match_id]
             
             # Create a new processor
-            processor = MatchProcessor(match_id)
+            processor = MatchProcessor(match_id, owner_steam_id)
             self.match_processors[match_id] = processor
-            logging.info(f"Created new match processor for match {match_id}")
+            logging.info(f"Created new match processor for match {match_id} owned by {owner_steam_id}")
             
             return processor
     
     def _extract_match_id(self, payload: Dict) -> Optional[str]:
         """
-        Extract the match identifier from a GSI payload.
+        Extract the match identifier from a GSI payload. Use provider.steamid
+        rather than player.steamid, to prevent payload processing for clients
+        that aren't of interest (spectated players, other than our client).
         
         The match ID is constructed from:
         1. Map name
@@ -110,19 +125,20 @@ class MatchManager:
             The match identifier, or None if it couldn't be extracted
         """
         try:
-            if 'map' not in payload or 'player' not in payload:
+            if 'map' not in payload or 'provider' not in payload:
                 return None
                 
             map_data = payload['map']
-            player_data = payload['player']
+            provider_data = payload['provider']
             
             # Extract stable components
             map_name = map_data.get('name', 'unknown_map')
             game_mode = map_data.get('mode', 'unknown_mode')
-            steam_id = player_data.get('steamid', 'unknown_player')
+            owner_steam_id = provider_data.get('steamid', 'unknown_player')
             
             # Create a stable match identifier that won't change during the match
-            match_id = f"{map_name}_{game_mode}_{steam_id}"
+            # OR when spectating a player other than the client provider
+            match_id = f"{map_name}_{game_mode}_{owner_steam_id}"
             
             return match_id
             

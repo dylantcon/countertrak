@@ -82,10 +82,12 @@ class GSIServer:
                 logging.info("Server is now receiving data")
             
             # Log payload structure for debugging (only in dev environments)
-            if 'player' in payload:
-                player_name = payload.get('player', {}).get('name', 'unknown')
-                steam_id = payload.get('player', {}).get('steamid', 'unknown')
-                logging.debug(f"Received payload from player {player_name} ({steam_id})")
+            if 'provider' in payload and 'player' in payload:
+                owner_id = payload['provider'].get('steamid', 'unknown')
+                player_id = payload['player'].get('steamid', 'unknown')
+                player_name = payload['player'].get('name', 'unknown')
+
+                logging.debug(f"Received payload from client {owner_id}, player data: {player_name} ({player_id})")
             
             # Process the payload through the match manager
             await self.match_manager.process_payload(payload)

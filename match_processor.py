@@ -19,14 +19,16 @@ class MatchProcessor:
     Processes and maintains state for a single CS2 match.
     """
     
-    def __init__(self, match_id: str):
+    def __init__(self, match_id: str, owner_steam_id: str):
         """
         Initialize a new match processor for a specific match.
         
         Args:
             match_id: The match identifier
+            owner_steam_id: The steam ID of the client owner
         """
         self.match_id = match_id
+        self.owner_steam_id = owner_steam_id
         self.extractor = PayloadExtractor()
         
         # Match metadata
@@ -42,9 +44,9 @@ class MatchProcessor:
         self.last_update_time = time.time()
         self.is_completed = False
         
-        logging.info(f"Match processor initialized for match {match_id}")
+        logging.info(f"Match processor initialized for match {match_id} owned by {owner_steam_id}")
     
-    async def process_payload(self, payload: Dict) -> None:
+    async def process_payload(self, payload: Dict, is_owner_playing: bool) -> None:
         """
         Process a GSI payload for this match.
         
@@ -56,20 +58,24 @@ class MatchProcessor:
         
         Args:
             payload: The GSI payload from CS2
+            is_owner_playing: Whether the payload represents the client owner's state
         """
         try:
             # Update the last activity timestamp
             self.last_update_time = time.time()
+
+            if 'player' in payload:
+                player_name = payload.get('player', {}).get('name', 'unknown')
+                player_steam_id = payload.get('player', {}).get('steamid', 'unknown')
+
+                # for first payload, log association
+                if not self.match_state:
+                    if is_owner_playing:
+                        logging.info(f"Match {self.match_id} associated with player {player_name} ({player_steam_id})")
+                    else:
+                        logging.info(f"Match {self.match_id} processing spectated player {player_name} ({player_steam_id})")
             
-            # Log the first payload for this match when we first create it
-            if not self.match_state:
-                logging.info(f"Processing first payload for match {self.match_id}")
-                if 'player' in payload:
-                    player_name = payload.get('player', {}).get('name', 'unknown')
-                    steam_id = payload.get('player', {}).get('steamid', 'unknown')
-                    logging.info(f"Match {self.match_id} associated with player {player_name} ({steam_id})")
-            
-            # Extract match state
+            # always extract match state regardless of who is being observed
             new_match = self.extractor.extract_match_state(payload)
             if new_match:
                 # If this is a new round, process the round transition
@@ -89,15 +95,14 @@ class MatchProcessor:
                 if new_match.phase == "gameover":
                     logging.info(f"Match {self.match_id}: Game over detected")
                     await self._handle_match_completion()
-            
-            # Extract player state
-            new_player = self.extractor.extract_player_state(payload)
-            if new_player:
-                # If this is a new player or the player's state has changed
-                await self._update_player_state(new_player)
-            
-            # Process state changes
-            await self._process_state_changes(payload)
+
+            # only update player state if this is the owner playing
+            if is_owner_playing:
+                new_player = self.extractor.extract_player_state(payload)
+                if new_player:
+                    await self._update_player_state(new_player)
+                    # process state changes for analysis
+                    await self._process_state_changes(payload)
             
         except Exception as e:
             logging.error(f"Error processing payload in match {self.match_id}: {str(e)}")
@@ -206,7 +211,8 @@ class MatchProcessor:
             logging.info(
                 f"Round {round_number} stats for {player.name}: "
                 f"kills={player.round_kills}, "
-                f"damage={player.round_damage}"
+                f"damage={player.round_damage}, "
+                f"Cumulative MVPs={player.match_mvps}"
             )
     
     async def _handle_match_completion(self) -> None:
@@ -224,7 +230,7 @@ class MatchProcessor:
                 
                 logging.info(
                     f"Final score - CT: {ct_score}, T: {t_score}, "
-                    f"Total rounds: {len(self.rounds_processed)}"
+                    f"Total rounds: {ct_score + t_score}"
                 )
                 
                 # TODO: Persist final match data to database

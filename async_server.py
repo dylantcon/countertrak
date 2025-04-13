@@ -159,7 +159,7 @@ async def main():
     """
     try:
         # Server configuration
-        HOST = "127.0.0.1"
+        HOST = "0.0.0.0"
         PORT = 3000
         AUTH_TOKEN = "S8RL9Z6Y22TYQK45JB4V8PHRJJMD9DS9"  # Match .cfg file
         

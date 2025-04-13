@@ -32,7 +32,29 @@ class MatchManager:
         self.lock = asyncio.Lock()
         
         logging.info("Match Manager initialized")
-    
+
+    def print_payload(self, payload, indent_level=0):
+        """
+        Recursively print a nested payload structure for debugging.
+        
+        Args:
+            payload: Dictionary or JSON-like structure to print
+            indent_level: Current indentation level (increases with depth)
+        """
+        if not isinstance(payload, dict):
+            logging.warning(f"Payload is not a dictionary: {payload}")
+            return
+            
+        for key, value in payload.items():
+            indent_str = ' ' * indent_level
+            if not isinstance(value, dict):
+                # for non-dictionary values, print key-value pair
+                logging.warning(f"{indent_str}{key}: {value}")
+            else:
+                # for nested dictionaries, print key and recurse
+                logging.warning(f"{indent_str}{key}:")
+                self.print_payload(value, indent_level + 2)
+
     async def process_payload(self, payload: Dict) -> None:
         """
         Process a GSI payload by routing it to the appropriate match processor.
@@ -50,8 +72,12 @@ class MatchManager:
             match_id = self._extract_match_id(payload)
             
             if not match_id:
-                logging.warning("Could not extract match ID from payload")
-                return
+                if self.is_menu_payload(payload):
+                    logging.info(f"Player {payload['player']['name']} is in the lobby.")
+                else:
+                    logging.warning("Could not extract match ID from this payload:")
+                    self.print_payload(payload)
+                return None
 
             # extract owner and player steamIDs for ownership context
             owner_steam_id = payload.get('provider', {}).get('steamid')
@@ -198,3 +224,12 @@ class MatchManager:
             }
             for match_id, processor in self.match_processors.items()
         ]
+
+    def is_menu_payload(self, payload) -> bool:
+        if type(payload) is not dict:
+            return False
+        if 'player' not in payload:
+            return False
+        if 'activity' not in payload['player']:
+            return False
+        return payload['player']['activity'] == 'menu'

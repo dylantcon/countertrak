@@ -33,7 +33,6 @@ class PlayerState:
     armor: int
     money: int
     equip_value: int
-    round_damage: int
     round_kills: int
     match_kills: int
     match_deaths: int
@@ -137,7 +136,6 @@ class PayloadExtractor:
             money=state.get('money', 0),
             equip_value=state.get('equip_value', 0),
             round_kills=state.get('round_kills', 0),
-            round_damage=state.get('round_totaldmg', 0),
             match_kills=stats.get('kills', 0),
             match_deaths=stats.get('deaths', 0),
             match_assists=stats.get('assists', 0),

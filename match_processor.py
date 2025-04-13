@@ -61,7 +61,7 @@ class MatchProcessor:
             is_owner_playing: Whether the payload represents the client owner's state
         """
         try:
-            # Update the last activity timestamp
+            # update the last activity timestamp
             self.last_update_time = time.time()
 
             if 'player' in payload:
@@ -78,7 +78,7 @@ class MatchProcessor:
             # always extract match state regardless of who is being observed
             new_match = self.extractor.extract_match_state(payload)
             if new_match:
-                # If this is a new round, process the round transition
+                # if this is a new round, process the round transition
                 if self.match_state and new_match.round != self.match_state.round:
                     logging.info(f"Match {self.match_id}: Round change from {self.match_state.round} to {new_match.round}")
                     await self._process_round_transition(
@@ -126,7 +126,7 @@ class MatchProcessor:
             await self._save_round_data(old_round)
         
         # If we're starting a new round, update tracking
-        if phase == "freezetime" and new_round > old_round:
+        if phase == "over" and new_round > old_round:
             self.round_start_time = time.time()
             logging.info(f"Match {self.match_id}: Starting round {new_round}")
     
@@ -211,8 +211,7 @@ class MatchProcessor:
             logging.info(
                 f"Round {round_number} stats for {player.name}: "
                 f"kills={player.round_kills}, "
-                f"damage={player.round_damage}, "
-                f"Cumulative MVPs={player.match_mvps}"
+                f"Total MVPs={player.match_mvps}"
             )
     
     async def _handle_match_completion(self) -> None:

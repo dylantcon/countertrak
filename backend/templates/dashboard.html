@@ -1,0 +1,92 @@
+<!-- templates/dashboard.html -->
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CounterTrak Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; }
+        .stats-container { display: flex; flex-wrap: wrap; gap: 20px; }
+        .stats-card { flex: 1; min-width: 300px; border: 1px solid #ddd; border-radius: 8px; padding: 15px; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
+    </style>
+</head>
+<body>
+    <h1>CounterTrak Dashboard</h1>
+    
+    <div class="stats-container">
+        <div class="stats-card">
+            <h2>Recent Matches</h2>
+            <table id="matches-table">
+                <thead>
+                    <tr>
+                        <th>Map</th>
+                        <th>Score (CT-T)</th>
+                        <th>Date</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- JS will populate this -->
+                </tbody>
+            </table>
+        </div>
+        
+        <div class="stats-card">
+            <h2>Performance Metrics</h2>
+            <canvas id="performanceChart"></canvas>
+        </div>
+    </div>
+    
+    <script>
+        // Simple fetch to display matches
+        fetch('/api/matches/')
+            .then(response => response.json())
+            .then(data => {
+                const tableBody = document.querySelector('#matches-table tbody');
+                data.results.forEach(match => {
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td>${match.map_name}</td>
+                        <td>${match.team_ct_score}-${match.team_t_score}</td>
+                        <td>${new Date(match.start_timestamp).toLocaleDateString()}</td>
+                    `;
+                    tableBody.appendChild(row);
+                });
+            });
+            
+        // Demo chart
+        const ctx = document.getElementById('performanceChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: ['Kills', 'Deaths', 'Assists', 'MVPs'],
+                datasets: [{
+                    label: 'Recent Performance',
+                    data: [12, 5, 3, 1],
+                    backgroundColor: [
+                        'rgba(75, 192, 192, 0.2)',
+                        'rgba(255, 99, 132, 0.2)',
+                        'rgba(54, 162, 235, 0.2)',
+                        'rgba(255, 206, 86, 0.2)'
+                    ],
+                    borderColor: [
+                        'rgba(75, 192, 192, 1)',
+                        'rgba(255, 99, 132, 1)',
+                        'rgba(54, 162, 235, 1)',
+                        'rgba(255, 206, 86, 1)'
+                    ],
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                scales: {
+                    y: {
+                        beginAtZero: true
+                    }
+                }
+            }
+        });
+    </script>
+</body>
+</html>

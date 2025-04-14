@@ -9,8 +9,13 @@ import asyncio
 import logging
 import json
 import uuid
+import os
+import sys
 from aiohttp import web
 from typing import Dict, Optional
+
+# Configure Django
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'countertrak.settings')
 
 # Configure logging
 logging.basicConfig(
@@ -22,9 +27,21 @@ logging.basicConfig(
     ]
 )
 
+# Add the parent directory to sys.path to enable imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Import Django and set it up
+import django
+django.setup()
+
+# Now we can import Django models
+from apps.matches.models import Match, Round
+from apps.stats.models import PlayerRoundState, PlayerWeapon, PlayerMatchStat, Weapon
+from apps.accounts.models import SteamAccount
+
 # Import the payload extractor
-from match_processor import MatchProcessor
-from match_manager import MatchManager
+from gsi.match_processor import MatchProcessor
+from gsi.match_manager import MatchManager
 
 class GSIServer:
     """
@@ -81,7 +98,7 @@ class GSIServer:
                 self.running = True
                 logging.info("Server is now receiving data")
             
-            # Log payload structure for debugging (only in dev environments)
+            # Log payload structure for debugging
             if 'provider' in payload and 'player' in payload:
                 owner_id = payload['provider'].get('steamid', 'unknown')
                 player_id = payload['player'].get('steamid', 'unknown')
@@ -158,7 +175,7 @@ async def main():
     Main entry point for the server.
     """
     try:
-        # Server configuration
+        # Server configuration - hardcoded for now
         HOST = "0.0.0.0"
         PORT = 3000
         AUTH_TOKEN = "S8RL9Z6Y22TYQK45JB4V8PHRJJMD9DS9"  # Match .cfg file

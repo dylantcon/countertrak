@@ -10,6 +10,7 @@ import logging
 import time
 from datetime import datetime, timedelta
 from typing import Dict, Optional, List, Set
+from gsi.django_integration import create_or_update_match, create_or_update_player_state
 
 # Import PayloadExtractor to leverage original proof-of-concept
 from payloadextractor import PayloadExtractor, MatchState, PlayerState
@@ -202,17 +203,20 @@ class MatchProcessor:
         Args:
             round_number: The round number to save
         """
-        # For now, just log that we would save the data
-        # In the future, this will persist to PostgreSQL
-        logging.info(f"Match {self.match_id}: Would save data for round {round_number}")
-        
-        # Log player stats for this round
-        for steam_id, player in self.player_states.items():
-            logging.info(
-                f"Round {round_number} stats for {player.name}: "
-                f"kills={player.round_kills}, "
-                f"Total MVPs={player.match_mvps}"
-            )
+        if self.match_state:
+            # create/update match record
+            match, _ = await create_or_update_match(self.match_state)
+
+            # create round record
+            # (implement this in django_integration.py)
+
+            # save player states
+            for steam_id, player in self.player_states.items():
+                await create_or_update_player_state(
+                    self.match_state.match_id,
+                    round_number,
+                    player
+                )
     
     async def _handle_match_completion(self) -> None:
         """

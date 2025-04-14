@@ -161,10 +161,11 @@ class MatchManager:
             map_name = map_data.get('name', 'unknown_map')
             game_mode = map_data.get('mode', 'unknown_mode')
             owner_steam_id = provider_data.get('steamid', 'unknown_player')
+            timestamp = provider_data.get('timestamp', str(int(time.time())))
             
             # Create a stable match identifier that won't change during the match
             # OR when spectating a player other than the client provider
-            match_id = f"{map_name}_{game_mode}_{owner_steam_id}"
+            match_id = f"{map_name}_{game_mode}_{owner_steam_id}_{timestamp}"
             
             return match_id
             

@@ -4,18 +4,12 @@ CounterTrak Asynchronous GSI Server
 Handles HTTP POST requests from CS2 Game State Integration.
 """
 import time
-print(f"[{time.strftime('%H:%M:%S')}] Starting script execution")
-
-import_start = time.time()
-
 import os
 import asyncio
 import json
 import sys
 from aiohttp import web
 from typing import Dict, Optional
-print(f"[{time.strftime('%H:%M:%S')}] Basic imports completed in {time.time() - import_start:.3f}s")
-
 
 # Add the parent directory to sys.path to enable imports
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -23,24 +17,9 @@ if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
 from gsi.logging_service import gsi_logger as logger, payload_logger, log_to_file
-logger.debug(f"Set system path: {parent_dir}")
-
-# Configure Django environment
-django_start = time.time()
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'countertrak.settings')
-logger.debug(f"Set Django environment in {time.time() - django_start:.3f}s")
-
-# Initialize Django (this is a potential source of delay)
-django_setup_start = time.time()
 import django
-django.setup()
-django_setup_time = time.time() - django_setup_start
-logger.debug(f"Django setup completed in {django_setup_time:.3f}s")
-
-# Import MatchManager after Django is set up
-manager_import_start = time.time()
 from gsi.match_manager import MatchManager
-logger.debug(f"Imported MatchManager in {time.time() - manager_import_start:.3f}s")
 
 class GSIServer:
     """
@@ -89,12 +68,10 @@ class GSIServer:
         try:
             # Log the request details
             client_ip = request.remote
-            logger.debug(f"Received GSI payload from {client_ip}")
             
             # Read and parse the payload
             payload_start = time.time()
             payload = await request.json()
-            logger.debug(f"Parsed request payload in {time.time() - payload_start:.3f}s")
             
             # Authenticate the payload
             if not self._authenticate_payload(payload):
@@ -107,8 +84,6 @@ class GSIServer:
                 player_id = payload['player'].get('steamid', 'unknown')
                 player_name = payload['player'].get('name', 'unknown')
                 activity = payload['player'].get('activity', 'unknown')
-                
-                logger.debug(f"Payload details: owner={owner_id}, player={player_name}, steamid={player_id}, activity={activity}")
             
             # Set running flag if first request
             if not self.running:
@@ -118,7 +93,6 @@ class GSIServer:
             # Process the payload through the match manager
             process_start = time.time()
             await self.match_manager.process_payload(payload)
-            logger.debug(f"Processed payload in {time.time() - process_start:.3f}s")
             
             # Log HTTP access info
             logger.info(f"{client_ip} - POST / HTTP/1.1 200 OK")
@@ -203,8 +177,6 @@ async def main():
         AUTH_TOKEN = "S8RL9Z6Y22TYQK45JB4V8PHRJJMD9DS9"  # Match .cfg file
         
         server = GSIServer(HOST, PORT, AUTH_TOKEN)
-        logger.debug(f"Server object created in {time.time() - main_start:.3f}s")
-        
         await server.start()
         
     except asyncio.CancelledError:

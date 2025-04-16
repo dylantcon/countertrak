@@ -1,19 +1,34 @@
 """
 CounterTrak Server Runner - Runs Both Django and GSI server
-Fixed to properly capture all subprocess output
+Uses threading to properly handle subprocess output streams
 """
 import os
 import sys
 import subprocess
 import signal
 import time
+import threading
 import shlex
 
 # Get the absolute path to the script directory (backend folder)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
+def stream_output(process, prefix):
+    """
+    Stream output from a subprocess with a prefix label.
+    This function runs in its own thread to prevent blocking.
+    
+    Args:
+        process: The subprocess.Popen instance to read from
+        prefix: The label to add to each line (e.g., "Django" or "GSI")
+    """
+    for line in iter(process.stdout.readline, ''):
+        if line:
+            # Print with the prefix and ensure immediate flushing
+            print(f"[{prefix}] {line}", end="", flush=True)
+
 def run_both_servers():
-    """Run both Django and GSI servers with fixed output handling"""
+    """Run both Django and GSI servers with thread-based output handling"""
     print("Starting CounterTrak servers...")
 
     # Verify .env file existence
@@ -40,7 +55,6 @@ def run_both_servers():
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"  # Critical! Ensure unbuffered output
     
-    # This is the key change - run GSI server with shell=True to preserve logging
     # Start Django server
     django_cmd = f"{sys.executable} {manage_py} runserver 0.0.0.0:8000"
     django_process = subprocess.Popen(
@@ -55,7 +69,7 @@ def run_both_servers():
     )
     print(f"Django server started with PID {django_process.pid}")
 
-    # Start GSI server with shell=True
+    # Start GSI server
     gsi_cmd = f"{sys.executable} -u {gsi_server}"  # Force Python unbuffered mode
     gsi_process = subprocess.Popen(
         gsi_cmd,
@@ -80,19 +94,25 @@ def run_both_servers():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    # Process and display output more aggressively
+    # Create and start output streaming threads
+    django_thread = threading.Thread(
+        target=stream_output, 
+        args=(django_process, "Django"),
+        daemon=True
+    )
+    
+    gsi_thread = threading.Thread(
+        target=stream_output, 
+        args=(gsi_process, "GSI"),
+        daemon=True
+    )
+    
+    django_thread.start()
+    gsi_thread.start()
+
+    # Monitor processes and handle process termination
     try:
         while True:
-            # Process Django output
-            django_line = django_process.stdout.readline()
-            if django_line:
-                print(f"[Django] {django_line}", end="", flush=True)
-
-            # Process GSI output
-            gsi_line = gsi_process.stdout.readline()
-            if gsi_line:
-                print(f"[GSI] {gsi_line}", end="", flush=True)
-
             # Check if either process has terminated
             if django_process.poll() is not None:
                 print(f"Django server stopped unexpectedly with code {django_process.returncode}")
@@ -102,11 +122,17 @@ def run_both_servers():
                 print(f"GSI server stopped unexpectedly with code {gsi_process.returncode}")
                 break
 
-            # Short sleep to reduce CPU usage
-            time.sleep(0.05)
+            # Sleep to reduce CPU usage
+            time.sleep(0.5)
     finally:
-        gsi_process.terminate()
-        django_process.terminate()
+        # Ensure processes are terminated on exit
+        if django_process.poll() is None:
+            django_process.terminate()
+        
+        if gsi_process.poll() is None:
+            gsi_process.terminate()
+        
+        print("All servers terminated.")
 
 if __name__ == "__main__":
     # Set the Python path to include the backend directory

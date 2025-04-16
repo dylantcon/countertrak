@@ -2,6 +2,7 @@
 import os
 import django
 import logging
+from datetime import datetime
 from asgiref.sync import sync_to_async
 
 # Configure Django
@@ -13,10 +14,10 @@ from apps.matches.models import Match, Round
 from apps.stats.models import PlayerRoundState, PlayerWeapon, PlayerMatchStat, Weapon
 from apps.accounts.models import SteamAccount
 
-async def create_or_update_match(match_state):
+@sync_to_async
+def create_or_update_match(match_state):
     """Create or update Match record from GSI match state"""
-    @sync_to_async
-    def db_operation():
+    try:
         match, created = Match.objects.update_or_create(
             match_id=match_state.match_id,
             defaults={
@@ -29,22 +30,51 @@ async def create_or_update_match(match_state):
             }
         )
         return match, created
-    
-    return await db_operation()
+    except Exception as e:
+        logging.error(f"Error creating/updating match: {str(e)}")
+        return None, False
 
-async def create_or_update_player_state(match_id, round_number, player_state):
+@sync_to_async
+def create_or_update_round(match_id, round_number, phase, winning_team=None, win_condition=None):
+    """Create or update round record"""
+    try:
+        match = Match.objects.get(match_id=match_id)
+        round_obj, created = Round.objects.update_or_create(
+            match=match,
+            round_number=round_number,
+            defaults={
+                'phase': phase,
+                'winning_team': winning_team,
+                'win_condition': win_condition
+            }
+        )
+        return round_obj, created
+    except Match.DoesNotExist:
+        logging.error(f"Match {match_id} not found when creating round")
+        return None, False
+    except Exception as e:
+        logging.error(f"Error creating/updating round: {str(e)}")
+        return None, False
+
+@sync_to_async
+def create_or_update_player_state(match_id, round_number, player_state):
     """Create or update player state for a round"""
-    @sync_to_async
-    def db_operation():
+    try:
         # Get or create steam account
         steam_account, _ = SteamAccount.objects.get_or_create(
             steam_id=player_state.steam_id,
-            defaults={'player_name': player_state.name, 'user': None}
+            defaults={
+                'player_name': player_state.name, 
+                'auth_token': SteamAccount(steam_id=player_state.steam_id).generate_auth_token()
+            }
         )
+        
+        # Get match
+        match = Match.objects.get(match_id=match_id)
         
         # Update player round state
         state, created = PlayerRoundState.objects.update_or_create(
-            match_id=match_id,
+            match=match,
             round_number=round_number,
             steam_account=steam_account,
             defaults={
@@ -59,7 +89,7 @@ async def create_or_update_player_state(match_id, round_number, player_state):
         # Update player weapons
         for weapon_slot, weapon_state in player_state.weapons.items():
             weapon, _ = Weapon.objects.get_or_create(
-                weapon_id=int(weapon_slot),
+                weapon_id=int(weapon_slot) if weapon_slot.isdigit() else 0,
                 defaults={
                     'name': weapon_state.name,
                     'type': weapon_state.type,
@@ -78,6 +108,20 @@ async def create_or_update_player_state(match_id, round_number, player_state):
                 }
             )
         
+        # Update player match stats
+        PlayerMatchStat.objects.update_or_create(
+            steam_account=steam_account,
+            match=match,
+            defaults={
+                'kills': player_state.match_kills,
+                'deaths': player_state.match_deaths,
+                'assists': player_state.match_assists,
+                'mvps': player_state.match_mvps,
+                'score': player_state.match_score
+            }
+        )
+        
         return state
-    
-    return await db_operation()
+    except Exception as e:
+        logging.error(f"Error creating/updating player state: {str(e)}")
+        return None

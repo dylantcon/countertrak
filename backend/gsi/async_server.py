@@ -1,47 +1,46 @@
 """
 CounterTrak Asynchronous GSI Server
 
-An asynchronous implementation of the CS2 Game State Integration server 
-using aiohttp for high concurrency handling of multiple game clients.
+Handles HTTP POST requests from CS2 Game State Integration.
 """
+import time
+print(f"[{time.strftime('%H:%M:%S')}] Starting script execution")
 
-import asyncio
-import logging
-import json
-import uuid
+import_start = time.time()
+
 import os
+import asyncio
+import json
 import sys
 from aiohttp import web
 from typing import Dict, Optional
+print(f"[{time.strftime('%H:%M:%S')}] Basic imports completed in {time.time() - import_start:.3f}s")
 
-# Configure Django
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'countertrak.settings')
-
-# Configure logging
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('async_gsi_server.log'),
-        logging.StreamHandler()
-    ]
-)
 
 # Add the parent directory to sys.path to enable imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
 
-# Import Django and set it up
+from gsi.logging_service import gsi_logger as logger, payload_logger, log_to_file
+logger.debug(f"Set system path: {parent_dir}")
+
+# Configure Django environment
+django_start = time.time()
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'countertrak.settings')
+logger.debug(f"Set Django environment in {time.time() - django_start:.3f}s")
+
+# Initialize Django (this is a potential source of delay)
+django_setup_start = time.time()
 import django
 django.setup()
+django_setup_time = time.time() - django_setup_start
+logger.debug(f"Django setup completed in {django_setup_time:.3f}s")
 
-# Now we can import Django models
-from apps.matches.models import Match, Round
-from apps.stats.models import PlayerRoundState, PlayerWeapon, PlayerMatchStat, Weapon
-from apps.accounts.models import SteamAccount
-
-# Import the payload extractor
-from gsi.match_processor import MatchProcessor
+# Import MatchManager after Django is set up
+manager_import_start = time.time()
 from gsi.match_manager import MatchManager
+logger.debug(f"Imported MatchManager in {time.time() - manager_import_start:.3f}s")
 
 class GSIServer:
     """
@@ -59,21 +58,23 @@ class GSIServer:
             port: The port to listen on
             auth_token: The auth token to validate GSI payloads
         """
+        init_start = time.time()
         self.host = host
         self.port = port
         self.auth_token = auth_token
         self.app = web.Application()
         self.running = False
         
-        # Initialize the match manager
+        # Initialize the match manager - per original architecture
         self.match_manager = MatchManager()
         
         # Set up routes
         self.app.router.add_post('/', self.handle_gsi_payload)
         self.app.router.add_get('/status', self.handle_status)
         
-        logging.info(f"GSI Server initialized with address {host}:{port}")
-        logging.info(f"Auth token configured: {auth_token}")
+        init_time = time.time() - init_start
+        logger.info(f"GSI Server initialized with address {host}:{port} in {init_time:.3f}s")
+        logger.info(f"Auth token configured: {auth_token}")
     
     async def handle_gsi_payload(self, request: web.Request) -> web.Response:
         """
@@ -86,37 +87,50 @@ class GSIServer:
             An HTTP response
         """
         try:
+            # Log the request details
+            client_ip = request.remote
+            logger.debug(f"Received GSI payload from {client_ip}")
+            
             # Read and parse the payload
+            payload_start = time.time()
             payload = await request.json()
+            logger.debug(f"Parsed request payload in {time.time() - payload_start:.3f}s")
             
             # Authenticate the payload
             if not self._authenticate_payload(payload):
+                logger.warning(f"Unauthorized payload received from {client_ip}")
                 return web.Response(status=401, text="Unauthorized")
             
-            # Set running flag if first request
-            if not self.running:
-                self.running = True
-                logging.info("Server is now receiving data")
-            
-            # Log payload structure for debugging
+            # Log basic payload info for debugging
             if 'provider' in payload and 'player' in payload:
                 owner_id = payload['provider'].get('steamid', 'unknown')
                 player_id = payload['player'].get('steamid', 'unknown')
                 player_name = payload['player'].get('name', 'unknown')
-
-                logging.debug(f"Received payload from client {owner_id}, player data: {player_name} ({player_id})")
+                activity = payload['player'].get('activity', 'unknown')
+                
+                logger.debug(f"Payload details: owner={owner_id}, player={player_name}, steamid={player_id}, activity={activity}")
+            
+            # Set running flag if first request
+            if not self.running:
+                self.running = True
+                logger.info("Server is now receiving data")
             
             # Process the payload through the match manager
+            process_start = time.time()
             await self.match_manager.process_payload(payload)
+            logger.debug(f"Processed payload in {time.time() - process_start:.3f}s")
+            
+            # Log HTTP access info
+            logger.info(f"{client_ip} - POST / HTTP/1.1 200 OK")
             
             # Return 200 OK with a short response body
             return web.Response(status=200, text="OK")
             
         except json.JSONDecodeError as e:
-            logging.error(f"Failed to decode JSON payload: {str(e)}")
+            logger.error(f"Failed to decode JSON payload: {str(e)}")
             return web.Response(status=400, text="Invalid JSON")
         except Exception as e:
-            logging.error(f"Unexpected error processing request: {str(e)}")
+            logger.error(f"Unexpected error processing request: {str(e)}")
             return web.Response(status=500, text="Internal Server Error")
     
     async def handle_status(self, request: web.Request) -> web.Response:
@@ -150,21 +164,26 @@ class GSIServer:
             if "auth" in payload and "token" in payload["auth"]:
                 is_valid = payload["auth"]["token"] == self.auth_token
                 return is_valid
-            logging.warning("Payload missing auth token")
+            logger.warning("Payload missing auth token")
             return False
         except Exception as e:
-            logging.error(f"Error during authentication: {str(e)}")
+            logger.error(f"Error during authentication: {str(e)}")
             return False
     
     async def start(self):
         """
         Start the GSI server.
         """
+        start_time = time.time()
+        
+        # Set up the AIOHTTP server
         runner = web.AppRunner(self.app)
         await runner.setup()
         site = web.TCPSite(runner, self.host, self.port)
         await site.start()
-        logging.info(f"Server running at http://{self.host}:{self.port}")
+        
+        logger.info(f"Server startup completed in {time.time() - start_time:.3f}s")
+        logger.info(f"Server running at http://{self.host}:{self.port}")
         
         # Keep the server running
         while True:
@@ -175,24 +194,30 @@ async def main():
     Main entry point for the server.
     """
     try:
+        main_start = time.time()
+        logger.info("Starting CounterTrak Async GSI Server...")
+        
         # Server configuration - hardcoded for now
         HOST = "0.0.0.0"
         PORT = 3000
         AUTH_TOKEN = "S8RL9Z6Y22TYQK45JB4V8PHRJJMD9DS9"  # Match .cfg file
         
-        logging.info("Starting CounterTrak Async GSI Server...")
-        
         server = GSIServer(HOST, PORT, AUTH_TOKEN)
+        logger.debug(f"Server object created in {time.time() - main_start:.3f}s")
+        
         await server.start()
         
     except asyncio.CancelledError:
-        logging.info("Server shutdown requested")
+        logger.info("Server shutdown requested")
     except Exception as e:
-        logging.error(f"Unexpected error in main: {str(e)}")
+        logger.error(f"Unexpected error in main: {str(e)}")
         raise
 
 if __name__ == "__main__":
     try:
+        script_start = time.time()
         asyncio.run(main())
     except KeyboardInterrupt:
-        logging.info("Server shutdown requested via KeyboardInterrupt")
+        logger.info("Server shutdown requested via KeyboardInterrupt")
+    finally:
+        logger.info(f"Total script execution time: {time.time() - script_start:.3f}s")

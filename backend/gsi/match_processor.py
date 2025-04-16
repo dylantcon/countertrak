@@ -4,9 +4,8 @@ CounterTrak Match Processor
 Processes game state data for an individual CS2 match.
 Maintains state between updates and handles temporal sequence analysis.
 """
-
+from gsi.logging_service import match_processor_logger as logger, log_to_file
 import asyncio
-import logging
 import time
 from datetime import datetime, timedelta
 from typing import Dict, Optional, List, Set
@@ -45,7 +44,7 @@ class MatchProcessor:
         self.last_update_time = time.time()
         self.is_completed = False
         
-        logging.info(f"Match processor initialized for match {match_id} owned by {owner_steam_id}")
+        logger.info(f"Match processor initialized for match {match_id} owned by {owner_steam_id}")
     
     async def process_payload(self, payload: Dict, is_owner_playing: bool) -> None:
         """
@@ -72,16 +71,16 @@ class MatchProcessor:
                 # for first payload, log association
                 if not self.match_state:
                     if is_owner_playing:
-                        logging.info(f"Match {self.match_id} associated with player {player_name} ({player_steam_id})")
+                        logger.info(f"Match {self.match_id} associated with player {player_name} ({player_steam_id})")
                     else:
-                        logging.info(f"Match {self.match_id} processing spectated player {player_name} ({player_steam_id})")
+                        logger.info(f"Match {self.match_id} processing spectated player {player_name} ({player_steam_id})")
             
             # always extract match state regardless of who is being observed
             new_match = self.extractor.extract_match_state(payload)
             if new_match:
                 # if this is a new round, process the round transition
                 if self.match_state and new_match.round != self.match_state.round:
-                    logging.info(f"Match {self.match_id}: Round change from {self.match_state.round} to {new_match.round}")
+                    logger.info(f"Match {self.match_id}: Round change from {self.match_state.round} to {new_match.round}")
                     await self._process_round_transition(
                         old_round=self.match_state.round,
                         new_round=new_match.round,
@@ -94,7 +93,7 @@ class MatchProcessor:
                 
                 # Check if the match is completed
                 if new_match.phase == "gameover":
-                    logging.info(f"Match {self.match_id}: Game over detected")
+                    logger.info(f"Match {self.match_id}: Game over detected")
                     await self._handle_match_completion()
 
             # only update player state if this is the owner playing
@@ -106,7 +105,7 @@ class MatchProcessor:
                     await self._process_state_changes(payload)
             
         except Exception as e:
-            logging.error(f"Error processing payload in match {self.match_id}: {str(e)}")
+            logger.error(f"Error processing payload in match {self.match_id}: {str(e)}")
     
     async def _process_round_transition(self, old_round: int, new_round: int, phase: str) -> None:
         """
@@ -120,7 +119,7 @@ class MatchProcessor:
         # Mark the old round as processed if we haven't already
         if old_round not in self.rounds_processed:
             self.rounds_processed.add(old_round)
-            logging.info(f"Match {self.match_id}: Completed round {old_round}")
+            logger.info(f"Match {self.match_id}: Completed round {old_round}")
             
             # TODO: Here, we need a way to persist the round data to the database
             # For now, we'll just log it
@@ -129,7 +128,7 @@ class MatchProcessor:
         # If we're starting a new round, update tracking
         if phase == "over" and new_round > old_round:
             self.round_start_time = time.time()
-            logging.info(f"Match {self.match_id}: Starting round {new_round}")
+            logger.info(f"Match {self.match_id}: Starting round {new_round}")
     
     async def _update_player_state(self, player_state: PlayerState) -> None:
         """
@@ -169,9 +168,9 @@ class MatchProcessor:
                         # Especially important to track state changes
                         # (active/holstered) for weapon analytics
                         if 'state' in weapon_changes and weapon_changes['state'] == 'active':
-                            logging.debug(f"Player {steam_id} activated {new_weapon.name}")
+                            logger.debug(f"Player {steam_id} activated {new_weapon.name}")
                         elif 'state' in weapon_changes and weapon_changes['state'] == 'holstered':
-                            logging.debug(f"Player {steam_id} holstered {new_weapon.name}")
+                            logger.debug(f"Player {steam_id} holstered {new_weapon.name}")
         
         # Update the player's state
         self.player_states[steam_id] = player_state
@@ -224,14 +223,14 @@ class MatchProcessor:
         """
         if not self.is_completed:
             self.is_completed = True
-            logging.info(f"Match {self.match_id} completed")
+            logger.info(f"Match {self.match_id} completed")
             
             # Save final match stats
             if self.match_state:
                 ct_score = self.match_state.team_ct_score
                 t_score = self.match_state.team_t_score
                 
-                logging.info(
+                logger.info(
                     f"Final score - CT: {ct_score}, T: {t_score}, "
                     f"Total rounds: {ct_score + t_score}"
                 )
@@ -256,7 +255,7 @@ class MatchProcessor:
         # Check for inactivity
         inactive_seconds = time.time() - self.last_update_time
         if inactive_seconds > 600:  # 10 minutes
-            logging.info(f"Match {self.match_id} considered completed due to inactivity")
+            logger.info(f"Match {self.match_id} considered completed due to inactivity")
             return True
         
         return False

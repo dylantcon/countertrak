@@ -6,8 +6,8 @@ match processors. Serves as the central coordination point for all game
 state data flowing through the system.
 """
 
+from gsi.logging_service import match_manager_logger as logger, log_to_file
 import asyncio
-import logging
 import uuid
 from typing import Dict, Optional, List
 import json
@@ -31,7 +31,7 @@ class MatchManager:
         # Lock for thread-safe match processor creation
         self.lock = asyncio.Lock()
         
-        logging.info("Match Manager initialized")
+        logger.info("Match Manager initialized")
 
     def print_payload(self, payload, indent_level=0):
         """
@@ -42,17 +42,17 @@ class MatchManager:
             indent_level: Current indentation level (increases with depth)
         """
         if not isinstance(payload, dict):
-            logging.warning(f"Payload is not a dictionary: {payload}")
+            logger.warning(f"Payload is not a dictionary: {payload}")
             return
             
         for key, value in payload.items():
             indent_str = ' ' * indent_level
             if not isinstance(value, dict):
                 # for non-dictionary values, print key-value pair
-                logging.warning(f"{indent_str}{key}: {value}")
+                logger.warning(f"{indent_str}{key}: {value}")
             else:
                 # for nested dictionaries, print key and recurse
-                logging.warning(f"{indent_str}{key}:")
+                logger.warning(f"{indent_str}{key}:")
                 self.print_payload(value, indent_level + 2)
 
     async def process_payload(self, payload: Dict) -> None:
@@ -73,9 +73,9 @@ class MatchManager:
             
             if not match_id:
                 if self.is_menu_payload(payload):
-                    logging.info(f"Player {payload['player']['name']} is in the lobby.")
+                    logger.info(f"Player {payload['player']['name']} is in the lobby.")
                 else:
-                    logging.warning("Could not extract match ID from this payload:")
+                    logger.warning("Could not extract match ID from this payload:")
                     self.print_payload(payload)
                 return None
 
@@ -88,7 +88,7 @@ class MatchManager:
             is_owner_playing = (owner_steam_id == player_steam_id)
 
             if not is_owner_playing:
-                logging.debug(f"Client {owner_steam_id} is spectating {player_name} ({player_steam_id})")
+                logger.debug(f"Client {owner_steam_id} is spectating {player_name} ({player_steam_id})")
             
             # Get or create the match processor with owner context
             processor = await self._get_or_create_processor(match_id, owner_steam_id)
@@ -100,7 +100,7 @@ class MatchManager:
             await self._cleanup_completed_matches()
             
         except Exception as e:
-            logging.error(f"Error processing payload: {str(e)}")
+            logger.error(f"Error processing payload: {str(e)}")
     
     async def _get_or_create_processor(self, match_id: str, owner_steam_id: str) -> MatchProcessor:
         """
@@ -127,7 +127,7 @@ class MatchManager:
             # Create a new processor
             processor = MatchProcessor(match_id, owner_steam_id)
             self.match_processors[match_id] = processor
-            logging.info(f"Created new match processor for match {match_id} owned by {owner_steam_id}")
+            logger.info(f"Created new match processor for match {match_id} owned by {owner_steam_id}")
             
             return processor
     
@@ -161,16 +161,15 @@ class MatchManager:
             map_name = map_data.get('name', 'unknown_map')
             game_mode = map_data.get('mode', 'unknown_mode')
             owner_steam_id = provider_data.get('steamid', 'unknown_player')
-            timestamp = provider_data.get('timestamp', str(int(time.time())))
             
             # Create a stable match identifier that won't change during the match
             # OR when spectating a player other than the client provider
-            match_id = f"{map_name}_{game_mode}_{owner_steam_id}_{timestamp}"
+            match_id = f"{map_name}_{game_mode}_{owner_steam_id}"
             
             return match_id
             
         except Exception as e:
-            logging.error(f"Error extracting match ID: {str(e)}")
+            logger.error(f"Error extracting match ID: {str(e)}")
             return None
     
     async def _cleanup_completed_matches(self) -> None:
@@ -194,7 +193,7 @@ class MatchManager:
                 for match_id in to_remove:
                     if match_id in self.match_processors:
                         del self.match_processors[match_id]
-                        logging.info(f"Removed completed match {match_id}")
+                        logger.info(f"Removed completed match {match_id}")
     
     def get_active_match_count(self) -> int:
         """

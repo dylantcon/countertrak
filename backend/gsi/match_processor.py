@@ -6,45 +6,52 @@ Maintains state between updates and handles temporal sequence analysis.
 """
 from gsi.logging_service import match_processor_logger as logger, log_to_file
 import asyncio
+import uuid
 import time
 from datetime import datetime, timedelta
 from typing import Dict, Optional, List, Set
 from gsi.django_integration import create_or_update_match, create_or_update_player_state
+from asgiref.sync import sync_to_async
+from datetime import datetime
 
-# Import PayloadExtractor to leverage original proof-of-concept
-from payloadextractor import PayloadExtractor, MatchState, PlayerState
+
+# import payloadextractor to leverage original proof-of-concept
+from gsi.payloadextractor import PayloadExtractor, MatchState, PlayerState
 
 class MatchProcessor:
     """
     Processes and maintains state for a single CS2 match.
     """
     
-    def __init__(self, match_id: str, owner_steam_id: str):
+    def __init__(self, base_match_id: str, full_match_id: str, owner_steam_id: str):
         """
         Initialize a new match processor for a specific match.
         
         Args:
-            match_id: The match identifier
+            base_match_id: The match identifier, without an appended UUID
+            full_match_id: The complete match ID with an appended UUID
             owner_steam_id: The steam ID of the client owner
         """
-        self.match_id = match_id
+        self.base_match_id = base_match_id
+        self.match_id = full_match_id
         self.owner_steam_id = owner_steam_id
         self.extractor = PayloadExtractor()
         
-        # Match metadata
+        # match metadata
         self.match_state: Optional[MatchState] = None
         self.player_states: Dict[str, PlayerState] = {}
         
-        # Round tracking
+        # round tracking
         self.current_round = 0
         self.round_start_time: Optional[float] = None
         self.rounds_processed: Set[int] = set()
         
-        # Activity tracking
+        # activity tracking
         self.last_update_time = time.time()
         self.is_completed = False
+        self.match_persisted = False
         
-        logger.info(f"Match processor initialized for match {match_id} owned by {owner_steam_id}")
+        logger.info(f"Match processor initialized for match {self.match_id} owned by {owner_steam_id}")
     
     async def process_payload(self, payload: Dict, is_owner_playing: bool) -> None:
         """
@@ -87,11 +94,11 @@ class MatchProcessor:
                         phase=new_match.phase
                     )
                 
-                # Update the match state
+                # update the match state
                 self.match_state = new_match
                 self.current_round = new_match.round
                 
-                # Check if the match is completed
+                # check if the match is completed
                 if new_match.phase == "gameover":
                     logger.info(f"Match {self.match_id}: Game over detected")
                     await self._handle_match_completion()
@@ -116,17 +123,19 @@ class MatchProcessor:
             new_round: The new round number
             phase: The current match phase
         """
-        # Mark the old round as processed if we haven't already
+        # check if the old round is ready to be persisted
+        if self.extractor.should_persist_round(old_round):
+            logger.info(f"Match {self.match_id}: Round {old_round} ready for persistence")
+            await self._save_round_data(old_round)
+            self.rounds_processed.add(old_round)
+
+        # mark as processed if we've already passed it
         if old_round not in self.rounds_processed:
             self.rounds_processed.add(old_round)
             logger.info(f"Match {self.match_id}: Completed round {old_round}")
-            
-            # TODO: Here, we need a way to persist the round data to the database
-            # For now, we'll just log it
             await self._save_round_data(old_round)
-        
-        # If we're starting a new round, update tracking
-        if phase == "over" and new_round > old_round:
+
+        if phase == 'over' and new_round > old_round:
             self.round_start_time = time.time()
             logger.info(f"Match {self.match_id}: Starting round {new_round}")
     
@@ -139,22 +148,22 @@ class MatchProcessor:
         """
         steam_id = player_state.steam_id
         
-        # Check if we've seen this player before
+        # check if we've seen this player before
         if steam_id in self.player_states:
             old_state = self.player_states[steam_id]
             
-            # Track changes in player state (similar to monitor_state_changes)
+            # track changes in player state (similar to monitor_state_changes)
             basic_changes = {
                 k: v for k, v in vars(player_state).items()
                 if k != 'weapons' and getattr(old_state, k) != v
             }
             
             if basic_changes:
-                # TODO: Here we would track significant state changes
-                # For performance metrics analysis
+                # todo: here we would track significant state changes
+                # for performance metrics analysis
                 pass
             
-            # Track weapon changes
+            # track weapon changes
             for weapon_slot, new_weapon in player_state.weapons.items():
                 if weapon_slot in old_state.weapons:
                     old_weapon = old_state.weapons[weapon_slot]
@@ -165,14 +174,14 @@ class MatchProcessor:
                     }
                     
                     if weapon_changes:
-                        # Especially important to track state changes
+                        # especially important to track state changes
                         # (active/holstered) for weapon analytics
                         if 'state' in weapon_changes and weapon_changes['state'] == 'active':
                             logger.debug(f"Player {steam_id} activated {new_weapon.name}")
                         elif 'state' in weapon_changes and weapon_changes['state'] == 'holstered':
                             logger.debug(f"Player {steam_id} holstered {new_weapon.name}")
         
-        # Update the player's state
+        # update the player's state
         self.player_states[steam_id] = player_state
     
     async def _process_state_changes(self, payload: Dict) -> None:
@@ -188,12 +197,12 @@ class MatchProcessor:
         Args:
             payload: The GSI payload
         """
-        # Use existing monitor_state_changes method as a starting point
-        # This will log changes but we'll need to enhance it for analytics
+        # use existing monitor_state_changes method as a starting point
+        # this will log changes but we'll need to enhance it for analytics
         self.extractor.monitor_state_changes(payload)
         
-        # TODO: Additional state change processing for analytics
-        # This will be filled in with our specific analytics logic
+        # todo: additional state change processing for analytics
+        # this will be filled in with our specific analytics logic
     
     async def _save_round_data(self, round_number: int) -> None:
         """
@@ -202,40 +211,142 @@ class MatchProcessor:
         Args:
             round_number: The round number to save
         """
-        if self.match_state:
-            # create/update match record
-            match, _ = await create_or_update_match(self.match_state)
+        if not self.match_state:
+            logger.warning(f"Cannot save round data: match state not available for round {round_number}")
+            return
 
-            # create round record
-            # (implement this in django_integration.py)
+        try:
+            # first, check that the Match exists in the database.
+            #  if it doesn't, instantiate the record. if it does, update it
+            if not self.match_persisted:
+                match, created = await create_or_update_match(self.match_state)
+                if created:
+                    logger.info(f"Created new match record for {self.match_id}")
+                else:
+                    logger.info(f"Updated existing match record for {self.match_id}")
+                self.match_persisted = True
 
-            # save player states
+            # get round information directly from the most recent payload,
+            #   handling delegated to PayloadExtractor methods
+            winning_team = self.extractor.get_round_winner(round_number)
+            win_condition = self.extractor.get_round_win_condition(round_number)
+
+            if not winning_team and self.current_round > round_number:
+                # if we've moved past this round but don't have winner info,
+                #  we can infer it from score changes (fallback logic)
+                if self.match_state.team_ct_score > 0:
+                    winning_team = "CT"
+                    win_condition = "elimination" # default assumption
+                elif self.match_state.team_t_score > 0:
+                    winning_team = "T"
+                    win_condition = "elimination" # default assumption
+
+            # create or update round record
+            round_obj, round_created = await create_or_update_round(
+                self.match_id, # use full match ID with UUID
+                round_number,
+                self.match_state.phase,
+                winning_team,
+                win_condition
+            )
+
+            if round_created:
+                logger.info(f"Created new round record for match {self.match_id}, round {round_number}")
+            else:
+                logger.info(f"Updated round record for match {self.match_id}, round {round_number}")
+
+            # save player states for this round
+            saved_states = 0
             for steam_id, player in self.player_states.items():
-                await create_or_update_player_state(
-                    self.match_state.match_id,
+                player_state = await create_or_update_player_state(
+                    self.match_id,
                     round_number,
                     player
                 )
+                if player_state:
+                    saved_states += 1
+
+            logger.info(f"Saved {saved_states} player states for match {self.match_id}, round {round_number}")
+
+        except Exception as e:
+            logger.error(f"Error saving round data for match {self.match_id}, round {round_number}: {str(e)}")
     
     async def _handle_match_completion(self) -> None:
         """
         Handle the completion of a match.
         """
-        if not self.is_completed:
+        if not self.is_completed and self.match_state:
             self.is_completed = True
             logger.info(f"Match {self.match_id} completed")
-            
-            # Save final match stats
-            if self.match_state:
+
+            try:
+                # save final match stats
                 ct_score = self.match_state.team_ct_score
                 t_score = self.match_state.team_t_score
-                
+                total_rounds = ct_score + t_score
+
                 logger.info(
                     f"Final score - CT: {ct_score}, T: {t_score}, "
-                    f"Total rounds: {ct_score + t_score}"
+                    f"Total rounds: {total_rounds}"
                 )
-                
-                # TODO: Persist final match data to database
+
+                # ensure all rounds are saved first
+                for round_num in range(1, self.current_round + 1):
+                    if round_num not in self.rounds_processed:
+                        logger.info(f"Processing missed round {round_num} during match completion")
+                        await self._save_round_data(round_num)
+
+                # update match record with end timestamp and final scores
+                from django.db import connection
+                end_timestamp = datetime.now()
+
+                # using Django's database connection for a raw SQL update
+                #  this demonstrates SQL usage for data insertion
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        UPDATE matches_match
+                        SET end_timestamp = %s,
+                            rounds_played = %s,
+                            team_ct_score = %s,
+                            team_t_score = %s
+                        WHERE match_id = %s
+                        """,
+                        [end_timestamp, total_rounds, ct_score, t_score, self.match_id]
+                    )
+                    logger.info(f"Updated match record with final stats for {self.match_id}")
+
+                # update final player match stats for each player
+                for steam_id, player in self.player_states.items():
+                    # this SQL demonstrates an UPSERT operation
+                    with connection.cursor() as cursor:
+                        cursor.execute(
+                            """
+                            INSERT INTO stats_playermatchstat
+                                (steam_account_id, match_id, kills, deaths, assists, mvps, score)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s)
+                            ON CONFLICT (steam_account_id, match_id)
+                            DO UPDATE SET
+                                kills = EXCLUDED.kills,
+                                deaths = EXCLUDED.deaths,
+                                assists = EXCLUDED.assists,
+                                mvps = EXCLUDED.mvps,
+                                score = EXCLUDED.score
+                            """,
+                            [
+                                steam_id,
+                                self.match_id,
+                                player.match_kills,
+                                player.match_deaths,
+                                player.match_assists,
+                                player.match_mvps,
+                                player.match_score
+                            ]
+                        )
+                    logger.info(f"Updated final stats for player {steam_id} in match {self.match_id}")
+
+            except Exception as e:
+                logger.error(f"Error handling match completion for {self.match_id}: {str(e)}")
     
     def is_match_completed(self) -> bool:
         """
@@ -248,11 +359,11 @@ class MatchProcessor:
         Returns:
             True if the match is completed, False otherwise
         """
-        # Check explicit completion
+        # check explicit completion
         if self.is_completed:
             return True
         
-        # Check for inactivity
+        # check for inactivity
         inactive_seconds = time.time() - self.last_update_time
         if inactive_seconds > 600:  # 10 minutes
             logger.info(f"Match {self.match_id} considered completed due to inactivity")
@@ -260,7 +371,7 @@ class MatchProcessor:
         
         return False
     
-    # Accessor methods for match statistics
+    # accessor methods for match statistics
     
     def get_map_name(self) -> str:
         """Get the map name for this match."""

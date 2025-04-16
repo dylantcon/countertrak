@@ -8,18 +8,21 @@ import os
 import asyncio
 import json
 import sys
+import django
 from aiohttp import web
 from typing import Dict, Optional
 
-# Add the parent directory to sys.path to enable imports
+# add the parent directory to sys.path to enable imports
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
 from gsi.logging_service import gsi_logger as logger, payload_logger, log_to_file
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'countertrak.settings')
-import django
 from gsi.match_manager import MatchManager
+
+GSI_PORT = 3000     # configure for .env later
+
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'countertrak.settings')
 
 class GSIServer:
     """
@@ -44,10 +47,10 @@ class GSIServer:
         self.app = web.Application()
         self.running = False
         
-        # Initialize the match manager - per original architecture
+        # initialize the match manager - per original architecture
         self.match_manager = MatchManager()
         
-        # Set up routes
+        # set up routes
         self.app.router.add_post('/', self.handle_gsi_payload)
         self.app.router.add_get('/status', self.handle_status)
         
@@ -66,38 +69,38 @@ class GSIServer:
             An HTTP response
         """
         try:
-            # Log the request details
+            # log the request details
             client_ip = request.remote
             
-            # Read and parse the payload
+            # read and parse the payload
             payload_start = time.time()
             payload = await request.json()
             
-            # Authenticate the payload
+            # authenticate the payload
             if not self._authenticate_payload(payload):
                 logger.warning(f"Unauthorized payload received from {client_ip}")
                 return web.Response(status=401, text="Unauthorized")
             
-            # Log basic payload info for debugging
+            # log basic payload info for debugging
             if 'provider' in payload and 'player' in payload:
                 owner_id = payload['provider'].get('steamid', 'unknown')
                 player_id = payload['player'].get('steamid', 'unknown')
                 player_name = payload['player'].get('name', 'unknown')
                 activity = payload['player'].get('activity', 'unknown')
             
-            # Set running flag if first request
+            # set running flag if first request
             if not self.running:
                 self.running = True
                 logger.info("Server is now receiving data")
             
-            # Process the payload through the match manager
+            # process the payload through the match manager
             process_start = time.time()
             await self.match_manager.process_payload(payload)
             
-            # Log HTTP access info
+            # log http access info
             logger.info(f"{client_ip} - POST / HTTP/1.1 200 OK")
             
-            # Return 200 OK with a short response body
+            # return 200 ok with a short response body
             return web.Response(status=200, text="OK")
             
         except json.JSONDecodeError as e:
@@ -120,7 +123,7 @@ class GSIServer:
         status = {
             "running": self.running,
             "active_matches": self.match_manager.get_active_match_count(),
-            "uptime": "N/A"  # TODO: Implement uptime tracking
+            "uptime": "N/A"  # todo: implement uptime tracking
         }
         return web.json_response(status)
     
@@ -150,7 +153,7 @@ class GSIServer:
         """
         start_time = time.time()
         
-        # Set up the AIOHTTP server
+        # set up the aiohttp server
         runner = web.AppRunner(self.app)
         await runner.setup()
         site = web.TCPSite(runner, self.host, self.port)
@@ -159,9 +162,9 @@ class GSIServer:
         logger.info(f"Server startup completed in {time.time() - start_time:.3f}s")
         logger.info(f"Server running at http://{self.host}:{self.port}")
         
-        # Keep the server running
+        # keep the server running
         while True:
-            await asyncio.sleep(3600)  # Keep alive
+            await asyncio.sleep(3600)  # keep alive
 
 async def main():
     """
@@ -171,10 +174,10 @@ async def main():
         main_start = time.time()
         logger.info("Starting CounterTrak Async GSI Server...")
         
-        # Server configuration - hardcoded for now
+        # server configuration - hardcoded for now
         HOST = "0.0.0.0"
-        PORT = 3000
-        AUTH_TOKEN = "S8RL9Z6Y22TYQK45JB4V8PHRJJMD9DS9"  # Match .cfg file
+        PORT = GSI_PORT
+        AUTH_TOKEN = "S8RL9Z6Y22TYQK45JB4V8PHRJJMD9DS9"  # match .cfg file
         
         server = GSIServer(HOST, PORT, AUTH_TOKEN)
         await server.start()

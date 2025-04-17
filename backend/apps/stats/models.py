@@ -11,12 +11,13 @@ class PlayerRoundState(models.Model):
     money = models.IntegerField()
     equip_value = models.IntegerField()
     round_kills = models.IntegerField(default=0)
+    state_timestamp = models.DateTimeField(auto_now_add=True)
     
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=['match', 'round_number', 'steam_account'], 
-                name='unique_player_round_state'
+                fields=['match', 'round_number', 'steam_account', 'state_timestamp'], 
+                name='unique_player_round_state_temporal'
             )
         ]
 
@@ -40,12 +41,13 @@ class PlayerWeapon(models.Model):
     ammo_clip = models.IntegerField(null=True, blank=True)
     ammo_reserve = models.IntegerField(null=True, blank=True)
     paintkit = models.CharField(max_length=64, default='default')
+    state_timestamp = models.DateTimeField(auto_now_add=True)
     
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=['player_round_state', 'weapon'], 
-                name='unique_player_weapon'
+                fields=['player_round_state', 'weapon', 'state_timestamp'], 
+                name='unique_player_weapon_temporal'
             )
         ]
 

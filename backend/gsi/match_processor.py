@@ -17,7 +17,7 @@ from gsi.django_integration import (
     # round operations
     round_exists, create_round, update_round_winner,
     # player state operations
-    batch_create_player_states,
+    batch_create_player_states, batch_create_player_weapons, ensure_steam_account,
     # match stats operations
     batch_update_player_match_stats
 )
@@ -132,17 +132,18 @@ class MatchProcessor:
             
             # update player state if owner is playing
             if is_owner_playing and player_state:
-                # store the player state in memory
+                # first ensure the steam account exists
+                await ensure_steam_account(player_state.steam_id, player_state.name)
+                
+                # store the player state in memory only - no database updates here
                 self.player_states[player_state.steam_id] = player_state
                 
                 # process significant events for analytics
-                self._process_significant_events(changes['significant_events'])
+                if 'significant_events' in changes:
+                    self._process_significant_events(changes['significant_events'])
                 
-                # update match stats regularly (these are cumulative)
-                if self.match_persisted:
-                    await batch_update_player_match_stats(
-                        self.match_id, {player_state.steam_id: player_state}
-                    )
+                # removed: no more continuous match stats updates
+                # this will now happen only at round transitions
                 
         except Exception as e:
             logger.error(f"Error processing payload in match {self.match_id}: {str(e)}")
@@ -180,30 +181,55 @@ class MatchProcessor:
     async def _process_round_transition(self, old_round: int, new_round: int, phase: str) -> None:
         """
         Process a transition between rounds.
-        
-        This is the key point where we persist accumulated player states.
-        
+
         Args:
             old_round: The previous round number
             new_round: The new round number
             phase: The current match phase
         """
-        # don't process round 0 (warm-up)
-        if old_round == 0:
-            return
-            
-        # check if we need to finalize the old round
-        if old_round not in self.rounds_persisted:
-            # persist the round and all accumulated player states
+        logger.info(f"Match {self.match_id}: Processing round transition from {old_round} to {new_round}")
+
+        # case 1: old round data persistence - must happen first
+        if old_round > 0 and old_round not in self.rounds_persisted:
+            # get the winner info for the just-completed round (old_round)
+            winning_team = self.extractor.get_round_winner(old_round)
+            win_condition = self.extractor.get_round_win_condition(old_round)
+
+            # first update the round with winner information if available
+            if winning_team:
+                round_exists = await self._ensure_round_exists(old_round, "over")
+                if round_exists:
+                    await update_round_winner(
+                        self.match_id, old_round, winning_team, win_condition
+                    )
+                    logger.info(f"Match {self.match_id}: Updated round {old_round} winner: {winning_team}")
+
+            # then persist all data for the completed round
             await self._persist_round_data(old_round)
-            self.rounds_persisted.add(old_round)
-            logger.info(f"Match {self.match_id}: Persisted data for round {old_round}")
-        
-        # set up for the new round
-        if phase == 'live' and new_round > old_round:
+            logger.info(f"Match {self.match_id}: Finalized data for round {old_round}")
+
+        # case 2: new round initialization - must happen second
+        if phase == 'live' and new_round > 0:
+            # check if the new round already exists
+            round_exists = await self._ensure_round_exists(new_round, phase)
+            if round_exists:
+                logger.info(f"Match {self.match_id}: Round {new_round} record already exists")
+            else:
+                # create new round record
+                await create_round(
+                    self.match_id, new_round, phase, None, None
+                )
+                logger.info(f"Match {self.match_id}: Created initial record for round {new_round}")
+
+            # set up for the new round
             self.round_start_time = time.time()
             self.current_round_persisted = False
-            logger.info(f"Match {self.match_id}: Starting round {new_round}")
+    
+    # additional helper method
+    async def _ensure_round_exists(self, round_number, phase):
+        """Check if round exists, return True if it does, False if it doesn't"""
+        exists = await round_exists(self.match_id, round_number)
+        return exists
 
     def _process_significant_events(self, events: List[Dict]) -> None:
         """
@@ -280,14 +306,20 @@ class MatchProcessor:
                 )
                 logger.info(f"Created round record for match {self.match_id}, round {round_number}")
             
-            # batch create player states with their weapons
-            if self.player_states:
-                created_states = await batch_create_player_states(
-                    self.match_id, round_number, self.player_states
-                )
-                logger.info(f"Created {len(created_states)} player states for match {self.match_id}, round {round_number}")
+            # first, create player states and get their ids
+            player_state_ids = await batch_create_player_states(
+                self.match_id, round_number, self.player_states
+            )
+            logger.info(f"Created {len(player_state_ids)} player states for match {self.match_id}, round {round_number}")
             
-            # update match stats
+            # then, explicitly create weapon states using the ids
+            if player_state_ids:
+                weapon_count = await batch_create_player_weapons(
+                    self.match_id, round_number, self.player_states, player_state_ids
+                )
+                logger.info(f"Created {weapon_count} weapon states for match {self.match_id}, round {round_number}")
+            
+            # finally, update match stats
             if self.player_states:
                 await batch_update_player_match_stats(self.match_id, self.player_states)
                 

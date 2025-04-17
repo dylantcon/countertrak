@@ -5,10 +5,10 @@ from typing import Dict, Optional, List, Set, Any, Tuple
 from datetime import datetime
 from django.utils import timezone
 
-# Utilize our custom logger service
+# utilize our custom logger service
 from gsi.logging_service import payload_logger as logger
 
-# Import utility functions
+# import utility functions
 from gsi.utils import extract_base_match_id
 
 @dataclass
@@ -39,7 +39,7 @@ class WeaponState:
     ammo_clip_max: Optional[int] = None # max ammo in clip
     ammo_reserve: Optional[int] = None  # reserve ammo
     paintkit: str = "default"           # weapon skin
-    state_timestamp: int = field(default_factory=lambda: int(time.time()))  # Unix timestamp
+    state_timestamp: int = field(default_factory=lambda: int(time.time()))  # unix timestamp
 
 @dataclass
 class RoundState:
@@ -52,7 +52,7 @@ class RoundState:
     win_team: Optional[str] = None   # winning team (ct, t, or none if ongoing)
     bomb_state: Optional[str] = None # bomb state (planted, exploded, defused, or none)
     win_condition: Optional[str] = None  # how the round was won
-    timestamp: int = field(default_factory=lambda: int(time.time()))  # Unix timestamp
+    timestamp: int = field(default_factory=lambda: int(time.time()))  # unix timestamp
 
 @dataclass
 class PlayerState:
@@ -73,7 +73,7 @@ class PlayerState:
     match_assists: int      # total assists in match
     match_mvps: int         # total mvps in match
     match_score: int        # total score in match
-    state_timestamp: int = field(default_factory=lambda: int(time.time()))  # Unix timestamp
+    state_timestamp: int = field(default_factory=lambda: int(time.time()))  # unix timestamp
     weapons: Dict[str, WeaponState] = field(default_factory=dict)  # current weapons
 
 class PayloadExtractor:
@@ -87,12 +87,12 @@ class PayloadExtractor:
     """
 
     def __init__(self):
-        # Current state tracking
+        # current state tracking
         self.current_match: Optional[MatchState] = None
         self.player_states: Dict[str, PlayerState] = {}
         self.current_round: Optional[RoundState] = None
         
-        # Historical data tracking
+        # historical data tracking
         self.round_history: Dict[int, RoundState] = {}  # map round_number to roundstate
         self.processed_rounds: Set[int] = set()         # track which rounds have been processed
         
@@ -111,23 +111,23 @@ class PayloadExtractor:
         Returns:
             Dictionary containing all extracted states and detected changes
         """
-        # Extract timestamp once at the beginning
+        # extract timestamp once at the beginning
         timestamp = self._extract_timestamp(payload)
         
-        # Extract all state components with the same timestamp
+        # extract all state components with the same timestamp
         match_state = self.extract_match_state(payload, timestamp)
         player_state = self.extract_player_state(payload, timestamp)
         round_state = self.extract_round_state(payload, timestamp)
         
-        # Detect state changes before updating internal state
+        # detect state changes before updating internal state
         changes = self._detect_state_changes(
             payload, match_state, player_state, round_state
         )
         
-        # Update internal state
+        # update internal state
         self._update_internal_state(match_state, player_state, round_state)
         
-        # Return a complete result with all states and changes
+        # return a complete result with all states and changes
         return {
             'timestamp': timestamp,
             'match_state': match_state,
@@ -171,18 +171,24 @@ class PayloadExtractor:
         map_data = payload['map']
         provider_data = payload['provider']
 
-        # Use centralized utility function to get base_match_id
+        # use centralized utility function to get base_match_id
         base_match_id = extract_base_match_id(payload)
         if not base_match_id:
             return None
 
-        # Return full match state with the provided timestamp
+        # get raw round number from map payload portion
+        raw_round = map_data.get('round', 0)
+
+        # add 1 to convert from zero-indexed to one-indexed
+        adjusted_round = raw_round + 1
+
+        # return full match state with the provided timestamp
         return MatchState(
             match_id=base_match_id,
             mode=map_data.get('mode', 'casual'),
             map_name=map_data.get('name', 'unknown_map'),
             phase=map_data.get('phase', 'unknown'),
-            round=map_data.get('round', 0),
+            round=adjusted_round,
             team_ct_score=map_data.get('team_ct', {}).get('score', 0),
             team_t_score=map_data.get('team_t', {}).get('score', 0),
             timestamp=timestamp
@@ -201,19 +207,26 @@ class PayloadExtractor:
         """
         if 'round' not in payload or 'map' not in payload:
             return None
-            
+                
         round_data = payload.get('round', {})
         map_data = payload.get('map', {})
         
-        # Get current round number from map data
-        round_number = map_data.get('round', 0)
+        # log raw round data for debugging
+        raw_round_number = map_data.get('round', 0)
+        ct_score = map_data.get('team_ct', {}).get('score', 0)
+        t_score = map_data.get('team_t', {}).get('score', 0)
         
-        # Extract round phase and other properties
+        logger.debug(f"Raw payload round data: round_number={raw_round_number}, CT={ct_score}, T={t_score}")
+        
+        # add 1 to payload round number to account for zero-indexing
+        round_number = raw_round_number + 1
+        
+        # extract round phase and other properties
         phase = round_data.get('phase', 'unknown')
         win_team = round_data.get('win_team')
         bomb_state = round_data.get('bomb')
         
-        # Determine win condition based on bomb state
+        # determine win condition based on bomb state
         win_condition = None
         if phase == 'over' and win_team:
             if bomb_state == 'exploded':
@@ -257,50 +270,64 @@ class PayloadExtractor:
     def extract_player_state(self, payload: Dict, timestamp: int) -> Optional[PlayerState]:
         """
         Extract player state from a GSI payload.
-        
+
         Args:
             payload: The GSI payload
             timestamp: Timestamp to use for this state
-            
+
         Returns:
             A PlayerState object, or None if player data couldn't be extracted
         """
         if 'player' not in payload:
             return None
-            
+
         player_data = payload.get('player', {})
-        
-        # Early return if essential data is missing
+
+        # early return if essential data is missing
         if 'steamid' not in player_data or 'state' not in player_data:
             return None
-        
-        # Extract core player data
+
+        # extract core player data
         steam_id = player_data.get('steamid', 'unknown')
         name = player_data.get('name', f'Player_{steam_id[-4:]}')
         team = player_data.get('team', 'SPEC')
-        
-        # Extract player state data
+
+        # extract player state data
         state_data = player_data.get('state', {})
         health = state_data.get('health', 0)
         armor = state_data.get('armor', 0)
         money = state_data.get('money', 0)
         equip_value = state_data.get('equip_value', 0)
         round_kills = state_data.get('round_kills', 0)
-        
-        # Extract match statistics
+
+        # extract match statistics
         stats_data = player_data.get('match_stats', {})
         match_kills = stats_data.get('kills', 0)
         match_deaths = stats_data.get('deaths', 0)
         match_assists = stats_data.get('assists', 0)
         match_mvps = stats_data.get('mvps', 0)
         match_score = stats_data.get('score', 0)
-        
-        # Extract weapons with consistent timestamp
+
+        # extract weapons with improved validation
         weapons = {}
         if 'weapons' in player_data:
-            for slot, weapon_data in player_data.get('weapons', {}).items():
-                weapons[slot] = self.extract_weapon_state(weapon_data, timestamp)
-        
+            weapons_data = player_data.get('weapons', {})
+
+            # log weapon count for debugging
+            logger.debug(f"Found {len(weapons_data)} weapons in payload for player {steam_id}")
+
+            for slot, weapon_data in weapons_data.items():
+                # validate weapon data
+                if not isinstance(weapon_data, dict) or 'name' not in weapon_data:
+                    logger.warning(f"Skipping invalid weapon data for slot {slot}: {weapon_data}")
+                    continue
+
+                # extract the weapon with server timestamp
+                weapon = self.extract_weapon_state(weapon_data, timestamp)
+                weapons[slot] = weapon
+                logger.debug(f"Extracted weapon {weapon.name} in slot {slot} with state {weapon.state}")
+
+        # create the playerstate with all extracted data
         return PlayerState(
             steam_id=steam_id,
             name=name,
@@ -336,7 +363,7 @@ class PayloadExtractor:
         Returns:
             Dictionary of detected changes for analytics
         """
-        # Track changes to report
+        # track changes to report
         changes = {
             'match': {},
             'round': {},
@@ -345,16 +372,16 @@ class PayloadExtractor:
             'significant_events': []
         }
         
-        # Check for match state changes
+        # check for match state changes
         if new_match and self.current_match:
-            # Compare relevant fields
+            # compare relevant fields
             for field in ['phase', 'round', 'team_ct_score', 'team_t_score']:
                 old_value = getattr(self.current_match, field)
                 new_value = getattr(new_match, field)
                 if old_value != new_value:
                     changes['match'][field] = {'old': old_value, 'new': new_value}
                     
-                    # Detect significant events
+                    # detect significant events
                     if field == 'round' and new_value > old_value:
                         changes['significant_events'].append({
                             'type': 'round_change',
@@ -368,16 +395,16 @@ class PayloadExtractor:
                             'final_score_t': new_match.team_t_score
                         })
         
-        # Check for round state changes
+        # check for round state changes
         if new_round and self.current_round:
-            # Compare relevant fields
+            # compare relevant fields
             for field in ['phase', 'win_team', 'bomb_state']:
                 old_value = getattr(self.current_round, field, None)
                 new_value = getattr(new_round, field, None)
                 if old_value != new_value:
                     changes['round'][field] = {'old': old_value, 'new': new_value}
                     
-                    # Detect significant events
+                    # detect significant events
                     if field == 'phase' and old_value != 'over' and new_value == 'over':
                         changes['significant_events'].append({
                             'type': 'round_over',
@@ -391,11 +418,11 @@ class PayloadExtractor:
                             'round_number': new_round.round_number
                         })
         
-        # Check for player state changes
+        # check for player state changes
         if new_player and new_player.steam_id in self.player_states:
             prev = self.player_states[new_player.steam_id]
             
-            # Track non-weapon changes
+            # track non-weapon changes
             for field in ['health', 'armor', 'money', 'equip_value', 'round_kills',
                          'match_kills', 'match_deaths', 'match_assists', 'match_mvps', 'match_score']:
                 old_value = getattr(prev, field)
@@ -403,12 +430,12 @@ class PayloadExtractor:
                 if old_value != new_value:
                     changes['player'][field] = {'old': old_value, 'new': new_value}
                     
-                    # Detect significant events
+                    # detect significant events
                     if field == 'round_kills' and new_value > old_value:
-                        # Player got a kill
+                        # player got a kill
                         kill_delta = new_value - old_value
                         
-                        # Find currently active weapon
+                        # find currently active weapon
                         active_weapon = None
                         for weapon_slot, weapon in new_player.weapons.items():
                             if weapon.state == 'active':
@@ -423,7 +450,7 @@ class PayloadExtractor:
                             'timestamp': new_player.state_timestamp
                         })
             
-            # Track weapon changes
+            # track weapon changes
             for weapon_slot, new_weapon in new_player.weapons.items():
                 if weapon_slot in prev.weapons:
                     old_weapon = prev.weapons[weapon_slot]
@@ -438,7 +465,7 @@ class PayloadExtractor:
                     if weapon_changes:
                         changes['weapons'][new_weapon.name] = weapon_changes
                         
-                        # Detect weapon state changes for analytics
+                        # detect weapon state changes for analytics
                         if 'state' in weapon_changes and weapon_changes['state']['new'] == 'active':
                             changes['significant_events'].append({
                                 'type': 'weapon_activated',
@@ -447,10 +474,10 @@ class PayloadExtractor:
                                 'timestamp': new_weapon.state_timestamp
                             })
                 else:
-                    # New weapon equipped
+                    # new weapon equipped
                     changes['weapons'][new_weapon.name] = {'state': 'added'}
             
-            # Check for removed weapons
+            # check for removed weapons
             for weapon_slot, old_weapon in prev.weapons.items():
                 if weapon_slot not in new_player.weapons:
                     changes['weapons'][old_weapon.name] = {'state': 'removed'}
@@ -471,29 +498,29 @@ class PayloadExtractor:
             player_state: New player state to store
             round_state: New round state to store
         """
-        # Update match state
+        # update match state
         if match_state:
             self.current_match = match_state
             
-        # Update player state
+        # update player state
         if player_state:
             self.player_states[player_state.steam_id] = player_state
             
-        # Update round state and history
+        # update round state and history
         if round_state:
             old_phase = None if not self.current_round else self.current_round.phase
             new_phase = round_state.phase
             
-            # Detect round completion (phase transition to 'over')
+            # detect round completion (phase transition to 'over')
             if old_phase != 'over' and new_phase == 'over' and round_state.win_team:
                 if round_state.round_number not in self.processed_rounds:
                     self.processed_rounds.add(round_state.round_number)
                     logger.info(f"Round {round_state.round_number} completed. Winner: {round_state.win_team}")
             
-            # Update current round state
+            # update current round state
             self.current_round = round_state
             
-            # Store in history if it's a complete round state
+            # store in history if it's a complete round state
             if round_state.phase == 'over' and round_state.win_team:
                 self.round_history[round_state.round_number] = round_state
 
@@ -535,14 +562,14 @@ class PayloadExtractor:
         Returns:
             True if the round should be persisted, False otherwise
         """
-        # A round should be persisted if:
-        # 1. It's in the round history (completed)
-        # 2. It hasn't been marked as processed yet
+        # a round should be persisted if:
+        # 1. it's in the round history (completed)
+        # 2. it hasn't been marked as processed yet
         in_history = round_number in self.round_history
         not_processed = round_number not in self.processed_rounds
         
         if in_history and not_processed:
-            # Mark as processed to avoid duplicate persistence
+            # mark as processed to avoid duplicate persistence
             self.processed_rounds.add(round_number)
             return True
         

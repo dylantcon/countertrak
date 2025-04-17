@@ -22,9 +22,9 @@ class PlayerRoundState(models.Model):
         ]
 
 class Weapon(models.Model):
-    weapon_id = models.IntegerField(primary_key=True)
+    weapon_id = models.IntegerField(primary_key=True, unique=True)
     name = models.CharField(max_length=64, unique=True)
-    type = models.CharField(max_length=32)
+    type = models.CharField(max_length=32, null=True, blank=True)
     max_clip = models.IntegerField(null=True, blank=True)
     
     def __str__(self):

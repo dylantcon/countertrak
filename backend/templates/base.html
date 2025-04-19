@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}CounterTrak{% endblock %}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --ct-primary: #1e3a8a;
+            --ct-secondary: #f59e0b;
+            --ct-dark: #1f2937;
+            --ct-light: #f3f4f6;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f8f9fa;
+            color: #333;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .navbar {
+            background-color: var(--ct-dark);
+        }
+        
+        .navbar-brand {
+            font-weight: bold;
+            color: var(--ct-secondary) !important;
+        }
+        
+        .nav-link {
+            color: var(--ct-light) !important;
+        }
+        
+        .nav-link:hover {
+            color: var(--ct-secondary) !important;
+        }
+        
+        .stats-card {
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            transition: transform 0.3s ease;
+            margin-bottom: 20px;
+        }
+        
+        .stats-card:hover {
+            transform: translateY(-5px);
+        }
+        
+        .card-header {
+            background-color: var(--ct-primary);
+            color: white;
+            border-radius: 10px 10px 0 0 !important;
+        }
+        
+        .footer {
+            margin-top: auto;
+            background-color: var(--ct-dark);
+            color: var(--ct-light);
+            padding: 1rem 0;
+        }
+        
+        .stats-value {
+            font-size: 2rem;
+            font-weight: bold;
+            color: var(--ct-primary);
+        }
+        
+        .stats-label {
+            font-size: 0.9rem;
+            color: #6c757d;
+        }
+        
+        /* Table styling */
+        .table-stats thead {
+            background-color: var(--ct-primary);
+            color: white;
+        }
+        
+        .table-stats tbody tr:hover {
+            background-color: rgba(245, 158, 11, 0.1);
+        }
+        
+        /* Buttons */
+        .btn-ct-primary {
+            background-color: var(--ct-primary);
+            border-color: var(--ct-primary);
+            color: white;
+        }
+        
+        .btn-ct-primary:hover {
+            background-color: #1a365d;
+            border-color: #1a365d;
+            color: white;
+        }
+        
+        .btn-ct-secondary {
+            background-color: var(--ct-secondary);
+            border-color: var(--ct-secondary);
+            color: white;
+        }
+        
+        .btn-ct-secondary:hover {
+            background-color: #d97706;
+            border-color: #d97706;
+            color: white;
+        }
+        
+        /* Main content area */
+        .main-content {
+            padding: 2rem 0;
+            flex: 1;
+        }
+    </style>
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark">
+        <div class="container">
+            <a class="navbar-brand" href="{% url 'dashboard' %}">
+                counterTrak
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'dashboard' %}">Dashboard</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'stats_home' %}">Stats</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'my_stats' %}">My Performance</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'my_weapon_analysis' %}">Weapon Analysis</a>
+                    </li>
+                </ul>
+                <ul class="navbar-nav">
+                    {% if user.is_authenticated %}
+                        <li class="nav-item">
+                            <a class="nav-link" href="{% url 'profile' %}">{{ user.username }}</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="{% url 'logout' %}">Logout</a>
+                        </li>
+                    {% else %}
+                        <li class="nav-item">
+                            <a class="nav-link" href="{% url 'login' %}">Login</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="{% url 'register' %}">Register</a>
+                        </li>
+                    {% endif %}
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="main-content">
+        <div class="container">
+            {% if messages %}
+                {% for message in messages %}
+                    <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+            
+            {% block content %}{% endblock %}
+        </div>
+    </div>
+
+    <footer class="footer">
+        <div class="container text-center">
+            <p>© 2025 counterTrak | A database-driven CS2 statistics tracker</p>
+        </div>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,197 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ steam_account.player_name }}'s Statistics | CounterTrak{% endblock %}
+
+{% block extra_css %}
+<style>
+    .stats-card {
+        transition: all 0.3s ease;
+    }
+    .stats-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
+    }
+    .stat-label {
+        font-size: 0.875rem;
+        color: #6c757d;
+    }
+    .stat-value {
+        font-size: 2rem;
+        font-weight: bold;
+        color: #1e3a8a;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1 class="mb-4">{{ steam_account.player_name }}'s Statistics</h1>
+    </div>
+</div>
+
+<!-- Overall stats summary -->
+<div class="row">
+    <div class="col-md-3">
+        <div class="card stats-card mb-4">
+            <div class="card-body text-center">
+                <div class="stats-value">{{ total_matches }}</div>
+                <div class="stats-label">Matches Played</div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-3">
+        <div class="card stats-card mb-4">
+            <div class="card-body text-center">
+                <div class="stats-value">{{ total_kills }}</div>
+                <div class="stats-label">Total Eliminations</div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-3">
+        <div class="card stats-card mb-4">
+            <div class="card-body text-center">
+                <div class="stats-value">{{ kd_ratio }}</div>
+                <div class="stats-label">K/D Ratio</div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-3">
+        <div class="card stats-card mb-4">
+            <div class="card-body text-center">
+                <div class="stats-value">{{ total_mvps }}</div>
+                <div class="stats-label">MVPs</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Combat performance - replacing Chart.js with a simple stat display -->
+    <div class="col-md-6">
+        <div class="card stats-card mb-4">
+            <div class="card-header">
+                <h5>Combat Performance</h5>
+            </div>
+            <div class="card-body">
+                <div class="row text-center">
+                    <div class="col-6 col-md-4 mb-3">
+                        <div class="stats-value">{{ total_kills }}</div>
+                        <div class="stats-label">Kills</div>
+                    </div>
+                    <div class="col-6 col-md-4 mb-3">
+                        <div class="stats-value">{{ total_deaths }}</div>
+                        <div class="stats-label">Deaths</div>
+                    </div>
+                    <div class="col-6 col-md-4 mb-3">
+                        <div class="stats-value">{{ total_assists }}</div>
+                        <div class="stats-label">Assists</div>
+                    </div>
+                    <div class="col-6 col-md-4 mb-3">
+                        <div class="stats-value">{{ total_mvps }}</div>
+                        <div class="stats-label">MVPs</div>
+                    </div>
+                    <div class="col-6 col-md-4 mb-3">
+                        <div class="stats-value">{{ kd_ratio }}</div>
+                        <div class="stats-label">K/D Ratio</div>
+                    </div>
+                    <div class="col-6 col-md-4 mb-3">
+                        <div class="stats-value">{{ total_matches }}</div>
+                        <div class="stats-label">Matches</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Weapon effectiveness -->
+    <div class="col-md-6">
+        <div class="card stats-card mb-4">
+            <div class="card-header">
+                <h5>Weapon Effectiveness</h5>
+            </div>
+            <div class="card-body">
+                {% if weapon_stats %}
+                    <div class="table-responsive">
+                        <table class="table table-stats">
+                            <thead>
+                                <tr>
+                                    <th>Weapon</th>
+                                    <th>Type</th>
+                                    <th>Times Used</th>
+                                    <th>Avg. Kills</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for weapon in weapon_stats %}
+                                <tr>
+                                    <td>{{ weapon.weapon__name|slice:"7:" }}</td>
+                                    <td>{{ weapon.weapon__type }}</td>
+                                    <td>{{ weapon.times_used }}</td>
+                                    <td>{{ weapon.avg_kills|floatformat:2 }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="text-center mt-3">
+                        <a href="{% url 'weapon_analysis' steam_account.steam_id %}" class="btn btn-ct-primary">Detailed Weapon Analysis</a>
+                    </div>
+                {% else %}
+                    <p class="text-center">No weapon data available yet.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Recent matches -->
+<div class="row">
+    <div class="col-12">
+        <div class="card stats-card">
+            <div class="card-header">
+                <h5>Recent Matches</h5>
+            </div>
+            <div class="card-body">
+                {% if recent_matches %}
+                    <div class="table-responsive">
+                        <table class="table table-stats">
+                            <thead>
+                                <tr>
+                                    <th>Map</th>
+                                    <th>Mode</th>
+                                    <th>K/D/A</th>
+                                    <th>Score</th>
+                                    <th>MVPs</th>
+                                    <th>Date</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for stat in recent_matches %}
+                                <tr>
+                                    <td>{{ stat.match.map_name }}</td>
+                                    <td>{{ stat.match.game_mode }}</td>
+                                    <td>{{ stat.kills }}/{{ stat.deaths }}/{{ stat.assists }}</td>
+                                    <td>{{ stat.score }}</td>
+                                    <td>{{ stat.mvps }}</td>
+                                    <td>{{ stat.match.start_timestamp|date:"M d, Y" }}</td>
+                                    <td>
+                                        <a href="{% url 'match_detail' stat.match.match_id %}" class="btn btn-sm btn-ct-primary">Details</a>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <p class="text-center">No matches have been played yet.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

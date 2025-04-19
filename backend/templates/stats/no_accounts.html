@@ -1,0 +1,33 @@
+{% extends 'base.html' %}
+
+{% block title %}No Linked Accounts | CounterTrak{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card stats-card">
+            <div class="card-header">
+                <h4>No Linked Steam Accounts</h4>
+            </div>
+            <div class="card-body text-center">
+                <svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" fill="#1e3a8a" class="bi bi-steam mb-3" viewBox="0 0 16 16">
+                    <path d="M.329 10.333A8.01 8.01 0 0 0 7.99 16C12.414 16 16 12.418 16 8s-3.586-8-8.009-8A8.006 8.006 0 0 0 0 7.468l.003.006 4.304 1.769A2.198 2.198 0 0 1 5.62 8.88l1.96-2.844.001-.001A3.046 3.046 0 0 1 10.42 5.5a3.05 3.05 0 0 1 3.042 3.042 3.05 3.05 0 0 1-3.042 3.042 3.05 3.05 0 0 1-1.566-.42l.001.001-2.844 1.96a2.169 2.169 0 0 1-2.204 1.358l-1.779 4.302a.16.16 0 0 1-.075-.019l-.013-.01ZM4.16 14.742l1.131-2.733a3.177 3.177 0 0 0 1.35-.65l2.396 1.639A4.043 4.043 0 0 0 10.42 13.5a4.043 4.043 0 0 0 4.043-4.043A4.043 4.043 0 0 0 10.42 5.414a4.043 4.043 0 0 0-4.043 4.043 4.13 4.13 0 0 0 .26 1.433l-1.639 2.396a3.295 3.295 0 0 0-1.584.361Zm7.878-3.241a2.032 2.032 0 0 1-2.032-2.032 2.032 2.032 0 0 1 2.032-2.032 2.032 2.032 0 0 1 2.032 2.032 2.032 2.032 0 0 1-2.032 2.032Z"/>
+                </svg>
+                
+                <h3 class="mb-3">You need to link a Steam account</h3>
+                <p class="lead mb-4">To view your CS2 statistics, you first need to link your Steam account to CounterTrak.</p>
+                
+                <div class="alert alert-info mb-4">
+                    <h5 class="alert-heading">Why link your Steam account?</h5>
+                    <p>Linking your Steam account allows CounterTrak to identify your CS2 gameplay data and associate it with your user profile. This is required to track and analyze your performance statistics.</p>
+                </div>
+                
+                <div class="d-grid gap-2 col-md-6 mx-auto">
+                    <a href="{% url 'link_steam' %}" class="btn btn-lg btn-ct-primary">Link Steam Account</a>
+                    <a href="{% url 'setup_guide' %}" class="btn btn-lg btn-outline-secondary">View Setup Guide</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

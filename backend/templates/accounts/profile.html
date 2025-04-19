@@ -1,0 +1,109 @@
+{% extends 'base.html' %}
+
+{% block title %}My Profile | CounterTrak{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1 class="mb-4">My Profile</h1>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-6">
+        <div class="card stats-card mb-4">
+            <div class="card-header">
+                <h5>Account Information</h5>
+            </div>
+            <div class="card-body">
+                <p><strong>Username:</strong> {{ user.username }}</p>
+                <p><strong>Date Joined:</strong> {{ user.date_joined|date:"F j, Y" }}</p>
+                <p><strong>Last Login:</strong> {{ user.last_login|date:"F j, Y" }}</p>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-6">
+        <div class="card stats-card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5>Linked Steam Accounts</h5>
+                <a href="{% url 'link_steam' %}" class="btn btn-sm btn-ct-primary">Link New Account</a>
+            </div>
+            <div class="card-body">
+                {% if steam_accounts %}
+                    <div class="table-responsive">
+                        <table class="table table-stats">
+                            <thead>
+                                <tr>
+                                    <th>Player Name</th>
+                                    <th>Steam ID</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for account in steam_accounts %}
+                                <tr>
+                                    <td>{{ account.player_name }}</td>
+                                    <td><code>{{ account.steam_id }}</code></td>
+                                    <td>
+                                        <div class="btn-group btn-group-sm">
+                                            <a href="{% url 'player_stats' account.steam_id %}" class="btn btn-ct-primary">View Stats</a>
+                                            <a href="{% url 'generate_config' account.steam_id %}" class="btn btn-ct-secondary">Get Config</a>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <div class="alert alert-info mb-0">
+                        <p>You don't have any linked Steam accounts yet.</p>
+                        <a href="{% url 'link_steam' %}" class="btn btn-sm btn-ct-primary">Link Steam Account</a>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-3">
+    <div class="col-12">
+        <div class="card stats-card">
+            <div class="card-header">
+                <h5>Getting Started</h5>
+            </div>
+            <div class="card-body">
+                <ol>
+                    <li>
+                        <strong>Link your Steam account</strong>
+                        {% if not steam_accounts %}
+                            <span class="badge bg-danger">Pending</span>
+                        {% else %}
+                            <span class="badge bg-success">Complete</span>
+                        {% endif %}
+                        <p>Link your Steam account to start tracking your CS2 performance.</p>
+                    </li>
+                    <li>
+                        <strong>Generate a GSI configuration file</strong>
+                        <p>Generate a configuration file for each linked Steam account that you want to track.</p>
+                    </li>
+                    <li>
+                        <strong>Install the configuration file</strong>
+                        <p>Place the generated file in your CS2 installation directory at:<br>
+                        <code>[CS2 Install Path]/game/csgo/cfg/gamestate_integration_countertrak.cfg</code></p>
+                    </li>
+                    <li>
+                        <strong>Play CS2 and check your stats</strong>
+                        <p>Start playing CS2 with the configuration file installed, then come back to see your stats!</p>
+                    </li>
+                </ol>
+                
+                <div class="text-center mt-4">
+                    <a href="{% url 'setup_guide' %}" class="btn btn-ct-primary">View Detailed Setup Guide</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,132 @@
+{% extends 'base.html' %}
+
+{% block title %}Setup Guide | CounterTrak{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1 class="mb-4">CounterTrak Setup Guide</h1>
+        <p class="lead">Follow these simple steps to start tracking your CS2 performance</p>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-lg-8">
+        <div class="card stats-card mb-4">
+            <div class="card-body">
+                <h2 class="card-title">Step 1: Create an Account</h2>
+                <p>If you haven't already, start by creating a CounterTrak account:</p>
+                <ol>
+                    <li>Click the <strong>Register</strong> link in the navigation bar</li>
+                    <li>Fill out the registration form with your details</li>
+                    <li>Log in with your new credentials</li>
+                </ol>
+                {% if not user.is_authenticated %}
+                <div class="text-center mt-3">
+                    <a href="{% url 'register' %}" class="btn btn-ct-primary">Create Account</a>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="card stats-card mb-4">
+            <div class="card-body">
+                <h2 class="card-title">Step 2: Link Your Steam Account</h2>
+                <p>Link your Steam account to CounterTrak:</p>
+                <ol>
+                    <li>Go to your <strong>Profile</strong> page</li>
+                    <li>Click the <strong>Link Steam Account</strong> button</li>
+                    <li>Enter your Steam ID and in-game name</li>
+                </ol>
+                <div class="alert alert-info">
+                    <strong>Tip:</strong> You can find your Steam ID by visiting your profile in the Steam client and looking at the URL. It will look something like <code>76561198012345678</code>.
+                </div>
+                {% if user.is_authenticated %}
+                <div class="text-center mt-3">
+                    <a href="{% url 'link_steam' %}" class="btn btn-ct-primary">Link Steam Account</a>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="card stats-card mb-4">
+            <div class="card-body">
+                <h2 class="card-title">Step 3: Generate and Install Your Config File</h2>
+                <p>Generate a custom GSI config file for your CS2 installation:</p>
+                <ol>
+                    <li>Go to your <strong>Profile</strong> page</li>
+                    <li>Next to your linked Steam account, click the <strong>Get Config</strong> button</li>
+                    <li>Save the downloaded file to:<br>
+                        <code>[CS2 Installation Folder]/game/csgo/cfg/gamestate_integration_countertrak.cfg</code></li>
+                    <li>Launch CS2 and play a match!</li>
+                </ol>
+                <div class="alert alert-warning">
+                    <strong>Important:</strong> The default CS2 installation folder is typically:<br>
+                    <code>C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\</code>
+                </div>
+                {% if user.is_authenticated and steam_accounts %}
+                <div class="text-center mt-3">
+                    <a href="{% url 'generate_config' steam_accounts.first.steam_id %}" class="btn btn-ct-primary">Generate Config File</a>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="card stats-card">
+            <div class="card-body">
+                <h2 class="card-title">Step 4: Start Playing and Check Your Stats</h2>
+                <p>Once you've completed the setup:</p>
+                <ol>
+                    <li>Play some CS2 matches with the config file installed</li>
+                    <li>Return to CounterTrak to see your performance stats</li>
+                    <li>Visit your dashboard to see match history and performance metrics</li>
+                    <li>Check out the advanced weapon analysis for detailed insights</li>
+                </ol>
+                <div class="alert alert-success">
+                    <strong>That's it!</strong> CounterTrak will automatically collect your game data whenever you play CS2. The more you play, the more data we can analyze to help improve your game.
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-4">
+        <div class="card stats-card mb-4">
+            <div class="card-header">
+                <h5>How CounterTrak Works</h5>
+            </div>
+            <div class="card-body">
+                <p>CounterTrak uses Valve's Game State Integration (GSI) system to collect data from your CS2 client:</p>
+                <ul>
+                    <li>The GSI config file tells CS2 to send game data to our servers</li>
+                    <li>Our system processes this data in real-time</li>
+                    <li>Data is stored in our database for analysis</li>
+                    <li>Our analytics engine identifies patterns in your gameplay</li>
+                </ul>
+                <p class="mt-3"><strong>CounterTrak is lightweight</strong> and has no impact on your game performance. It collects data in the background while you play.</p>
+            </div>
+        </div>
+
+        <div class="card stats-card mb-4">
+            <div class="card-header">
+                <h5>Troubleshooting</h5>
+            </div>
+            <div class="card-body">
+                <h6>No data appears after playing</h6>
+                <ul>
+                    <li>Verify the config file is in the correct location</li>
+                    <li>Make sure the file name is exactly <code>gamestate_integration_countertrak.cfg</code></li>
+                    <li>Check that your Steam ID is correctly entered</li>
+                    <li>Restart CS2 after installing the config file</li>
+                </ul>
+                
+                <h6 class="mt-3">Connection issues</h6>
+                <ul>
+                    <li>Ensure your firewall isn't blocking the connection</li>
+                    <li>Check that you're connected to the internet while playing</li>
+                    <li>Verify that the auth token in your config file matches your account</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

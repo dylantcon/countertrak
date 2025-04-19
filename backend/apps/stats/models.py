@@ -31,12 +31,13 @@ class Weapon(models.Model):
         return self.name
 
 class PlayerWeapon(models.Model):
-    player_round_state = models.ForeignKey(
-        PlayerRoundState, 
-        on_delete=models.CASCADE,
-        related_name='weapons'
-    )
+    # compound key components
+    match = models.ForeignKey('matches.Match', on_delete=models.CASCADE)
+    round_number = models.IntegerField()
+    steam_account = models.ForeignKey('accounts.SteamAccount', on_delete=models.CASCADE)
     weapon = models.ForeignKey(Weapon, on_delete=models.PROTECT)
+
+    # state fields
     state = models.CharField(max_length=32)
     ammo_clip = models.IntegerField(null=True, blank=True)
     ammo_reserve = models.IntegerField(null=True, blank=True)
@@ -46,7 +47,7 @@ class PlayerWeapon(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=['player_round_state', 'weapon', 'state_timestamp'], 
+                fields=['match', 'round_number', 'steam_account', 'weapon', 'state_timestamp'],
                 name='unique_player_weapon_temporal'
             )
         ]

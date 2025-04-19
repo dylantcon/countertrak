@@ -74,7 +74,6 @@ class PlayerState:
     match_mvps: int         # total mvps in match
     match_score: int        # total score in match
     state_timestamp: int = field(default_factory=lambda: int(time.time()))  # unix timestamp
-    weapons: Dict[str, WeaponState] = field(default_factory=dict)  # current weapons
 
 class PayloadExtractor:
     """
@@ -91,12 +90,29 @@ class PayloadExtractor:
         self.current_match: Optional[MatchState] = None
         self.player_states: Dict[str, PlayerState] = {}
         self.current_round: Optional[RoundState] = None
+        self.weapon_states: Dict[str, WeaponState] = {}
         
         # historical data tracking
         self.round_history: Dict[int, RoundState] = {}  # map round_number to roundstate
         self.processed_rounds: Set[int] = set()         # track which rounds have been processed
         
         logger.info("PayloadExtractor initialized")
+
+    def _extract_timestamp(self, payload: Dict) -> int:
+        """
+        Generate a consistent server-side timestamp for all state objects.
+
+        Using server timestamps ensures all events use the same time source,
+        which is critical for accurate temporal relationship analysis.
+
+        Args:
+            payload: The GSI payload (no longer used for timestamp)
+
+        Returns:
+            Unix timestamp (seconds since epoch)
+        """
+        # always use server timestamp for consistency
+        return int(timezone.now().timestamp())
 
     def process_payload(self, payload: Dict) -> Dict[str, Any]:
         """
@@ -118,14 +134,15 @@ class PayloadExtractor:
         match_state = self.extract_match_state(payload, timestamp)
         player_state = self.extract_player_state(payload, timestamp)
         round_state = self.extract_round_state(payload, timestamp)
+        weapon_states = self.extract_all_weapons(payload, timestamp)
         
         # detect state changes before updating internal state
         changes = self._detect_state_changes(
-            payload, match_state, player_state, round_state
+            payload, match_state, player_state, round_state, weapon_states
         )
         
         # update internal state
-        self._update_internal_state(match_state, player_state, round_state)
+        self._update_internal_state(match_state, player_state, round_state, weapon_states)
         
         # return a complete result with all states and changes
         return {
@@ -133,26 +150,9 @@ class PayloadExtractor:
             'match_state': match_state,
             'player_state': player_state, 
             'round_state': round_state,
+            'weapon_states': weapon_states,
             'changes': changes
         }
-
-    def _extract_timestamp(self, payload: Dict) -> int:
-        """
-        Extract timestamp from payload or use current time as fallback.
-        
-        Centralizing this method ensures consistent timestamp usage across all
-        extracted state objects.
-        
-        Args:
-            payload: The GSI payload
-            
-        Returns:
-            Unix timestamp (seconds since epoch)
-        """
-        if 'provider' in payload and 'timestamp' in payload['provider']:
-            return payload['provider']['timestamp']
-        
-        return int(timezone.now().timestamp())
 
     def extract_match_state(self, payload: Dict, timestamp: int) -> Optional[MatchState]:
         """
@@ -216,8 +216,6 @@ class PayloadExtractor:
         ct_score = map_data.get('team_ct', {}).get('score', 0)
         t_score = map_data.get('team_t', {}).get('score', 0)
         
-        logger.debug(f"Raw payload round data: round_number={raw_round_number}, CT={ct_score}, T={t_score}")
-        
         # add 1 to payload round number to account for zero-indexing
         round_number = raw_round_number + 1
         
@@ -267,6 +265,37 @@ class PayloadExtractor:
             state_timestamp=timestamp
         )
 
+    def extract_all_weapons(self, payload: Dict, timestamp: int) -> Dict[str, WeaponState]:
+        """
+        Extract all weapon states from a payload.
+
+        Args:
+            payload: The GSI payload
+            timestamp: Timestamp to use for this state
+
+        Returns:
+            Dictionary of weapon states, keyed by slot
+        """
+        weapons = {}
+
+        if 'player' not in payload or 'weapons' not in payload['player']:
+            return weapons
+
+        weapons_data = payload['player'].get('weapons', {})
+
+        # process each weapon
+        for slot, weapon_data in weapons_data.items():
+            # validate weapon data
+            if not isinstance(weapon_data, dict) or 'name' not in weapon_data:
+                logger.warning(f"Skipping invalid weapon data for slot {slot}")
+                continue
+
+            # use existing extract_weapon_state method
+            weapon = self.extract_weapon_state(weapon_data, timestamp)
+            weapons[slot] = weapon
+
+        return weapons
+
     def extract_player_state(self, payload: Dict, timestamp: int) -> Optional[PlayerState]:
         """
         Extract player state from a GSI payload.
@@ -308,25 +337,6 @@ class PayloadExtractor:
         match_mvps = stats_data.get('mvps', 0)
         match_score = stats_data.get('score', 0)
 
-        # extract weapons with improved validation
-        weapons = {}
-        if 'weapons' in player_data:
-            weapons_data = player_data.get('weapons', {})
-
-            # log weapon count for debugging
-            logger.debug(f"Found {len(weapons_data)} weapons in payload for player {steam_id}")
-
-            for slot, weapon_data in weapons_data.items():
-                # validate weapon data
-                if not isinstance(weapon_data, dict) or 'name' not in weapon_data:
-                    logger.warning(f"Skipping invalid weapon data for slot {slot}: {weapon_data}")
-                    continue
-
-                # extract the weapon with server timestamp
-                weapon = self.extract_weapon_state(weapon_data, timestamp)
-                weapons[slot] = weapon
-                logger.debug(f"Extracted weapon {weapon.name} in slot {slot} with state {weapon.state}")
-
         # create the playerstate with all extracted data
         return PlayerState(
             steam_id=steam_id,
@@ -342,17 +352,18 @@ class PayloadExtractor:
             match_assists=match_assists,
             match_mvps=match_mvps,
             match_score=match_score,
-            weapons=weapons,
             state_timestamp=timestamp
         )
 
     def _detect_state_changes(self, payload: Dict, new_match: Optional[MatchState],
-                            new_player: Optional[PlayerState], new_round: Optional[RoundState]) -> Dict:
+                            new_player: Optional[PlayerState], new_round: Optional[RoundState],
+                            new_weapons: Dict[str, WeaponState]) -> Dict:
         """
         Detect changes between previous and new states.
         
         This method analyzes differences between states to identify meaningful changes
         that should trigger analytics or database updates.
+        return changes
         
         Args:
             payload: The raw GSI payload
@@ -430,18 +441,16 @@ class PayloadExtractor:
                 if old_value != new_value:
                     changes['player'][field] = {'old': old_value, 'new': new_value}
                     
-                    # detect significant events
+                    # detect significant events (kills, etc.)
                     if field == 'round_kills' and new_value > old_value:
-                        # player got a kill
-                        kill_delta = new_value - old_value
-                        
                         # find currently active weapon
                         active_weapon = None
-                        for weapon_slot, weapon in new_player.weapons.items():
+                        for slot, weapon in new_weapons.items():
                             if weapon.state == 'active':
                                 active_weapon = weapon
                                 break
                         
+                        kill_delta = new_value - old_value
                         changes['significant_events'].append({
                             'type': 'player_kill',
                             'player_id': new_player.steam_id,
@@ -449,44 +458,44 @@ class PayloadExtractor:
                             'weapon': active_weapon.name if active_weapon else None,
                             'timestamp': new_player.state_timestamp
                         })
-            
-            # track weapon changes
-            for weapon_slot, new_weapon in new_player.weapons.items():
-                if weapon_slot in prev.weapons:
-                    old_weapon = prev.weapons[weapon_slot]
-                    weapon_changes = {}
-                    
-                    for field in ['state', 'ammo_clip', 'ammo_reserve']:
-                        old_value = getattr(old_weapon, field, None)
-                        new_value = getattr(new_weapon, field, None)
-                        if old_value != new_value:
-                            weapon_changes[field] = {'old': old_value, 'new': new_value}
-                    
-                    if weapon_changes:
-                        changes['weapons'][new_weapon.name] = weapon_changes
-                        
-                        # detect weapon state changes for analytics
-                        if 'state' in weapon_changes and weapon_changes['state']['new'] == 'active':
-                            changes['significant_events'].append({
-                                'type': 'weapon_activated',
-                                'player_id': new_player.steam_id,
-                                'weapon': new_weapon.name,
-                                'timestamp': new_weapon.state_timestamp
-                            })
-                else:
-                    # new weapon equipped
-                    changes['weapons'][new_weapon.name] = {'state': 'added'}
-            
-            # check for removed weapons
-            for weapon_slot, old_weapon in prev.weapons.items():
-                if weapon_slot not in new_player.weapons:
-                    changes['weapons'][old_weapon.name] = {'state': 'removed'}
         
-        return changes
+        # check for weapon changes separately
+        for slot, new_weapon in new_weapons.items():
+            if slot in self.weapon_states:
+                old_weapon = self.weapon_states[slot]
+                weapon_changes = {}
+                
+                for field in ['state', 'ammo_clip', 'ammo_reserve']:
+                    old_value = getattr(old_weapon, field, None)
+                    new_value = getattr(new_weapon, field, None)
+                    if old_value != new_value:
+                        weapon_changes[field] = {'old': old_value, 'new': new_value}
+                
+                if weapon_changes:
+                    changes['weapons'][new_weapon.name] = weapon_changes
+                    
+                    # detect weapon activation for analytics
+                    if 'state' in weapon_changes and weapon_changes['state']['new'] == 'active':
+                        changes['significant_events'].append({
+                            'type': 'weapon_activated',
+                            'weapon': new_weapon.name,
+                            'timestamp': new_weapon.state_timestamp
+                        })
+            else:
+                # new weapon
+                changes['weapons'][new_weapon.name] = {'state': 'added'}
+        
+        # check for removed weapons
+        for slot, old_weapon in self.weapon_states.items():
+            if slot not in new_weapons:
+                changes['weapons'][old_weapon.name] = {'state': 'removed'}
+        
+        return changes        
 
     def _update_internal_state(self, match_state: Optional[MatchState], 
                               player_state: Optional[PlayerState],
-                              round_state: Optional[RoundState]) -> None:
+                              round_state: Optional[RoundState],
+                              weapon_states: Optional[Dict[str, WeaponState]]) -> None:
         """
         Update internal state with newly extracted components.
         
@@ -505,6 +514,11 @@ class PayloadExtractor:
         # update player state
         if player_state:
             self.player_states[player_state.steam_id] = player_state
+
+        # update weapon state
+        if weapon_states:
+            self.weapon_states = weapon_states
+
             
         # update round state and history
         if round_state:
@@ -575,17 +589,14 @@ class PayloadExtractor:
         
         return False
 
-    def get_active_weapon(self, player_state: PlayerState) -> Optional[WeaponState]:
+    def get_active_weapon(self) -> Optional[WeaponState]:
         """
         Get the currently active weapon for a player.
-        
-        Args:
-            player_state: The player state to check
             
         Returns:
             The active weapon or None if no active weapon found
         """
-        for weapon in player_state.weapons.values():
+        for weapon in self.weapon_states.values():
             if weapon.state == 'active':
                 return weapon
         return None

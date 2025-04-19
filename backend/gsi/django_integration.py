@@ -18,6 +18,21 @@ from gsi.payloadextractor import MatchState, PlayerState, WeaponState
 
 logger = logging.getLogger('django_integration')
 
+def convert_unix_timestamp_to_datetime(unix_timestamp: int) -> datetime:
+    """
+    Converts a Unix timestamp (seconds since epoch) to a timezone-aware datetime object.
+    
+    Args:
+        unix_timestamp: The Unix timestamp to convert
+        
+    Returns:
+        A timezone-aware datetime object
+    """
+    return datetime.fromtimestamp(
+        unix_timestamp,
+        tz=timezone.get_current_timezone()
+    )
+
 #==============================================================================
 # match operations
 #==============================================================================
@@ -46,7 +61,7 @@ def _create_match_sync(match_state: MatchState, full_match_id: str = None) -> st
                     full_match_id,
                     match_state.mode,
                     match_state.map_name,
-                    timezone.now(),  # use timezone-aware datetime
+                    convert_unix_timestamp_to_datetime(match_state.timestamp),
                     match_state.round,
                     match_state.team_ct_score,
                     match_state.team_t_score
@@ -126,7 +141,8 @@ async def update_match(match_id: str, match_state: MatchState) -> bool:
     return await _update_match_sync(match_id, match_state)
 
 @sync_to_async
-def _complete_match_sync(match_id: str, ct_score: int, t_score: int, total_rounds: int) -> bool:
+def _complete_match_sync(match_id: str, ct_score: int, t_score: int, 
+                         total_rounds: int, timestamp: int) -> bool:
     """
     Synchronous implementation of match completion.
     
@@ -140,7 +156,7 @@ def _complete_match_sync(match_id: str, ct_score: int, t_score: int, total_round
         True if update was successful, False otherwise
     """
     try:
-        end_timestamp = timezone.now()
+        end_timestamp = convert_unix_timestamp_to_datetime(timestamp)
         with connection.cursor() as cursor:
             cursor.execute(
                 """
@@ -161,7 +177,8 @@ def _complete_match_sync(match_id: str, ct_score: int, t_score: int, total_round
         logger.error(f"Error completing match: {str(e)}")
         return False
 
-async def complete_match(match_id: str, ct_score: int, t_score: int, total_rounds: int) -> bool:
+async def complete_match(match_id: str, ct_score: int, t_score: int, 
+                         total_rounds: int, timestamp: int) -> bool:
     """
     Mark a match as completed and update final scores.
     
@@ -174,7 +191,7 @@ async def complete_match(match_id: str, ct_score: int, t_score: int, total_round
     Returns:
         True if update was successful, False otherwise
     """
-    return await _complete_match_sync(match_id, ct_score, t_score, total_rounds)
+    return await _complete_match_sync(match_id, ct_score, t_score, total_rounds, timestamp)
 
 @sync_to_async
 def _match_exists_sync(match_id: str) -> bool:
@@ -213,11 +230,11 @@ async def match_exists(match_id: str) -> bool:
 #==============================================================================
 # round operations
 #==============================================================================
-
 @sync_to_async
 def _create_round_sync(match_id: str, round_number: int, phase: str, 
                      winning_team: Optional[str] = None, 
-                     win_condition: Optional[str] = None) -> int:
+                     win_condition: Optional[str] = None,
+                     timestamp: int = None) -> int:
     """
     Synchronous implementation of round creation.
     
@@ -232,6 +249,8 @@ def _create_round_sync(match_id: str, round_number: int, phase: str,
         ID of the created round
     """
     try:
+        state_time = convert_unix_timestamp_to_datetime(timestamp)
+
         with connection.cursor() as cursor:
             cursor.execute(
                 """
@@ -240,7 +259,7 @@ def _create_round_sync(match_id: str, round_number: int, phase: str,
                 VALUES (%s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
-                [match_id, round_number, phase, timezone.now(), winning_team, win_condition]
+                [match_id, round_number, phase, state_time, winning_team, win_condition]
             )
             round_id = cursor.fetchone()[0]
             logger.info(f"Created round record for match {match_id}, round {round_number}")
@@ -251,7 +270,8 @@ def _create_round_sync(match_id: str, round_number: int, phase: str,
 
 async def create_round(match_id: str, round_number: int, phase: str, 
                       winning_team: Optional[str] = None, 
-                      win_condition: Optional[str] = None) -> int:
+                      win_condition: Optional[str] = None,
+                      timestamp: int = None) -> int:
     """
     Create a new round record.
     
@@ -265,7 +285,7 @@ async def create_round(match_id: str, round_number: int, phase: str,
     Returns:
         ID of the created round
     """
-    return await _create_round_sync(match_id, round_number, phase, winning_team, win_condition)
+    return await _create_round_sync(match_id, round_number, phase, winning_team, win_condition, timestamp)
 
 @sync_to_async
 def _update_round_winner_sync(match_id: str, round_number: int, 
@@ -419,7 +439,7 @@ async def ensure_steam_account(steam_id: str, player_name: str) -> str:
     return await _ensure_steam_account_sync(steam_id, player_name)
 
 #==============================================================================
-# player state operations
+# player round state operations
 #==============================================================================
 
 @sync_to_async
@@ -439,7 +459,7 @@ def _create_player_round_state_sync(match_id: str, round_number: int,
     try:
         with connection.cursor() as cursor:
             # create timestamp from the player state or current time
-            state_time = datetime.fromtimestamp(player_state.state_timestamp)
+            state_time = convert_unix_timestamp_to_datetime(player_state.state_timestamp)
             
             # insert new player state
             cursor.execute(
@@ -482,96 +502,6 @@ async def create_player_round_state(match_id: str, round_number: int, player_sta
     # create the player round state
     return await _create_player_round_state_sync(match_id, round_number, player_state)
 
-@sync_to_async
-def _create_player_weapon_states_sync(player_round_state_id: int, 
-                                    weapons: Dict[str, WeaponState]) -> int:
-    """
-    Synchronous implementation of player weapon state creation.
-    
-    Args:
-        player_round_state_id: The player round state ID these weapons belong to
-        weapons: Dictionary of weapon states to persist
-        
-    Returns:
-        Number of weapon records created
-    """
-    if not weapons:
-        logger.warning(f"No weapons provided for player_round_state_id={player_round_state_id}")
-        return 0
-        
-    try:
-        count = 0
-        with connection.cursor() as cursor:
-            # process each weapon
-            for weapon_slot, weapon_state in weapons.items():
-                try:
-                    # get the weapon_id from the weapons table using the weapon name
-                    weapon_name = weapon_state.name
-                    
-                    # additional validation
-                    if not weapon_name:
-                        logger.warning(f"Weapon in slot {weapon_slot} has no name, skipping.")
-                        continue
-                    
-                    cursor.execute(
-                        """
-                        SELECT weapon_id FROM stats_weapon WHERE name = %s
-                        """,
-                        [weapon_name]
-                    )
-                    result = cursor.fetchone()
-                    if not result:
-                        # log unknown weapon and skip
-                        logger.warning(f"Unknown weapon: {weapon_name}. Skipping creation of weapon state.")
-                        continue
-                    weapon_id = result[0]
-                    
-                    # use server timestamp for consistency
-                    state_time = timezone.now()
-                    
-                    # create a unique combination to avoid constraint violations
-                    cursor.execute(
-                        """
-                        INSERT INTO stats_playerweapon
-                        (player_round_state_id, weapon_id, state, ammo_clip,
-                         ammo_reserve, paintkit, state_timestamp)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
-                        """,
-                        [
-                            player_round_state_id,
-                            weapon_id,
-                            weapon_state.state,
-                            weapon_state.ammo_clip,
-                            weapon_state.ammo_reserve,
-                            weapon_state.paintkit,
-                            state_time
-                        ]
-                    )
-                    count += 1
-                except Exception as e:
-                    # log individual weapon errors but continue with others
-                    logger.error(f"Error creating weapon state for {weapon_state.name}: {str(e)}")
-            
-            logger.debug(f"Created {count} weapon states for player round state {player_round_state_id}")
-            return count
-    except Exception as e:
-        logger.error(f"Error creating player weapon states: {str(e)}")
-        return 0
-
-async def create_player_weapon_states(player_round_state_id: int, 
-                                    weapons: Dict[str, WeaponState]) -> int:
-    """
-    Create player weapon state records for all weapons.
-    
-    Args:
-        player_round_state_id: The player round state ID these weapons belong to
-        weapons: Dictionary of weapon states to persist
-        
-    Returns:
-        Number of weapon records created
-    """
-    return await _create_player_weapon_states_sync(player_round_state_id, weapons)
-
 async def batch_create_player_states(match_id: str, round_number: int,
                                   player_states: Dict[str, PlayerState]) -> Dict[str, int]:
     """
@@ -605,48 +535,125 @@ async def batch_create_player_states(match_id: str, round_number: int,
         logger.error(f"Error batch creating player states: {str(e)}")
         return {}
 
-async def batch_create_player_weapons(match_id: str, round_number: int,
-                                     player_states: Dict[str, PlayerState],
-                                     player_state_ids: Dict[str, int]) -> int:
+#==============================================================================
+# player weapons operations
+#==============================================================================
+
+@sync_to_async
+def _create_player_weapon_states_sync(match_id: str, round_number: int,
+                                    steam_id: str, weapons: Dict[str, WeaponState]) -> int:
     """
-    Create weapons for multiple players in a single logical operation.
+    Synchronous implementation of weapon state creation using compound key.
+    Preserves the original timestamp from when the payload was received.
+
+    Args:
+        match_id: The match ID
+        round_number: The round number
+        steam_id: The steam ID of the weapon owner
+        weapons: Dictionary of weapon states to persist
+    """
+    if not weapons:
+        logger.warning(f"No weapons provided for player {steam_id}")
+        return 0
+
+    try:
+        count = 0
+        with connection.cursor() as cursor:
+            # process each weapon
+            for slot, weapon_state in weapons.items():
+                try:
+                    # get weapon ID from name
+                    cursor.execute(
+                        "SELECT weapon_id FROM stats_weapon WHERE name = %s",
+                        [weapon_state.name]
+                    )
+                    result = cursor.fetchone()
+                    if not result:
+                        logger.warning(f"Unknown weapon: {weapon_state.name}")
+                        continue
+                    weapon_id = result[0]
+
+                    # convert the unix timestamp from weapon_state to a datetime object
+                    state_time = convert_unix_timestamp_to_datetime(weapon_state.state_timestamp)
+
+                    # insert using the original timestamp
+                    cursor.execute(
+                        """
+                        INSERT INTO stats_playerweapon
+                        (match_id, round_number, steam_account_id, weapon_id,
+                         state, ammo_clip, ammo_reserve, paintkit, state_timestamp)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        [
+                            match_id,
+                            round_number,
+                            steam_id,
+                            weapon_id,
+                            weapon_state.state,
+                            weapon_state.ammo_clip,
+                            weapon_state.ammo_reserve,
+                            weapon_state.paintkit,
+                            state_time
+                        ]
+                    )
+                    count += 1
+                except Exception as e:
+                    logger.error(f"Error creating weapon state for {weapon_state.name}: {str(e)}")
+
+            return count
+    except Exception as e:
+        logger.error(f"Error creating weapon states: {str(e)}")
+        return 0
+
+async def create_player_weapon_states(match_id: str, round_number: str,
+                                    steam_id: str, weapons: Dict[str, WeaponState]) -> int:
+    """
+    Create weapon states directly using the compound key components.
+
+    Args:
+        match_id: The match ID
+        round_number: The round number
+        steam_id: The steam ID of the weapon owner
+        weapons: Dictionary of weapon states
+
+    Returns:
+        Number of weapon states created
+    """
+    return await _create_player_weapon_states_sync(match_id, round_number, steam_id, weapons)
+
+async def batch_create_player_weapons(match_id: str, round_number: int,
+                                    steam_id: str, weapon_states: Dict[str, WeaponState]) -> int:
+    """
+    Create weapon records directly using the compound key approach.
+
+    Args:
+        match_id: The match ID
+        round_number: The round number
+        steam_id: The steam ID of the weapon owner
+        weapon_states: Dictionary of weapon states keyed by slot
+
+    Returns:
+        Number of weapon records created
     """
     try:
-        total_created = 0
+        if not weapon_states:
+            logger.warning(f"No weapon states to persist for player {steam_id}")
+            return 0
 
-        for steam_id, player_state in player_states.items():
-            # debug weapon availability
-            has_weapons = hasattr(player_state, 'weapons') and player_state.weapons
-            weapon_count = len(player_state.weapons) if has_weapons else 0
-            logger.debug(f"Player {steam_id} has {weapon_count} weapons at persistence time")
+        # persist weapons directly
+        weapon_count = await create_player_weapon_states(
+            match_id, round_number, steam_id, weapon_states
+        )
 
-            if has_weapons:
-                weapon_names = [w.name for w in player_state.weapons.values()]
-                logger.debug(f"Available weapons: {', '.join(weapon_names)}")
+        logger.info(f"Created {weapon_count} weapon states for match {match_id}, round {round_number}, player {steam_id}")
+        return weapon_count
 
-            if steam_id not in player_state_ids:
-                logger.warning(f"No player_state_id found for {steam_id}, skipping weapons")
-                continue
-
-            player_round_state_id = player_state_ids[steam_id]
-
-            if has_weapons:
-                weapon_count = await create_player_weapon_states(
-                    player_round_state_id, player_state.weapons
-                )
-                logger.debug(f"Created {weapon_count} weapon states for player {steam_id}, round {round_number}")
-                total_created += weapon_count
-            else:
-                logger.debug(f"No weapons found for player {steam_id}, round {round_number}")
-
-        logger.info(f"Batch created {total_created} weapon states for match {match_id}, round {round_number}")
-        return total_created
     except Exception as e:
-        logger.error(f"Error batch creating weapon states: {str(e)}")
+        logger.error(f"Error creating weapon states: {str(e)}")
         return 0
 
 #==============================================================================
-# match statistics operations
+# player match statistics operations
 #==============================================================================
 
 @sync_to_async

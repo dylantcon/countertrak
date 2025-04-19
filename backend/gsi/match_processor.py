@@ -53,6 +53,7 @@ class MatchProcessor:
         # match metadata
         self.match_state: Optional[MatchState] = None
         self.player_states: Dict[str, PlayerState] = {}
+        self.weapon_states: Dict[str, WeaponState] = {}
         
         # persistence tracking
         self.match_persisted = False
@@ -100,6 +101,7 @@ class MatchProcessor:
             # extract components from processed data
             match_state = processed_data['match_state']
             player_state = processed_data['player_state']
+            weapon_states = processed_data['weapon_states']
             changes = processed_data['changes']
             
             # check if we need to create the match record
@@ -131,19 +133,20 @@ class MatchProcessor:
                     await self._handle_match_completion()
             
             # update player state if owner is playing
-            if is_owner_playing and player_state:
-                # first ensure the steam account exists
-                await ensure_steam_account(player_state.steam_id, player_state.name)
+            if is_owner_playing:
+                if player_state:
+                    # first ensure the steam account exists
+                    await ensure_steam_account(player_state.steam_id, player_state.name)
+                    # store the player state
+                    self.player_states[player_state.steam_id] = player_state
                 
-                # store the player state in memory only - no database updates here
-                self.player_states[player_state.steam_id] = player_state
+                # new: store weapon states separately
+                if weapon_states:
+                    self.weapon_states = weapon_states
                 
                 # process significant events for analytics
                 if 'significant_events' in changes:
                     self._process_significant_events(changes['significant_events'])
-                
-                # removed: no more continuous match stats updates
-                # this will now happen only at round transitions
                 
         except Exception as e:
             logger.error(f"Error processing payload in match {self.match_id}: {str(e)}")
@@ -172,7 +175,6 @@ class MatchProcessor:
         created_id = await create_match(match_state, self.match_id)
         if created_id:
             self.match_persisted = True
-            logger.info(f"Created new match record for {self.match_id}")
             return True
         
         logger.error(f"Failed to create match record for {self.match_id}")
@@ -206,7 +208,6 @@ class MatchProcessor:
 
             # then persist all data for the completed round
             await self._persist_round_data(old_round)
-            logger.info(f"Match {self.match_id}: Finalized data for round {old_round}")
 
         # case 2: new round initialization - must happen second
         if phase == 'live' and new_round > 0:
@@ -217,7 +218,7 @@ class MatchProcessor:
             else:
                 # create new round record
                 await create_round(
-                    self.match_id, new_round, phase, None, None
+                    self.match_id, new_round, phase, None, None, self.match_state.timestamp
                 )
                 logger.info(f"Match {self.match_id}: Created initial record for round {new_round}")
 
@@ -268,13 +269,13 @@ class MatchProcessor:
     async def _persist_round_data(self, round_number: int) -> None:
         """
         Persist all data for a completed round.
-        
+
         This includes:
         1. Round record
         2. Player round states
-        3. Player weapons
+        3. Player weapons (now handled separately)
         4. Updated match stats
-        
+
         Args:
             round_number: The round number to persist
         """
@@ -285,7 +286,7 @@ class MatchProcessor:
         try:
             # check if round already exists
             round_already_exists = await round_exists(self.match_id, round_number)
-            
+
             # get round winner information
             winning_team = self.extractor.get_round_winner(round_number)
             win_condition = self.extractor.get_round_win_condition(round_number)
@@ -297,35 +298,32 @@ class MatchProcessor:
                     await update_round_winner(
                         self.match_id, round_number, winning_team, win_condition
                     )
-                    logger.info(f"Updated round winner for match {self.match_id}, round {round_number}")
             else:
                 # create new round
                 await create_round(
-                    self.match_id, round_number, 
+                    self.match_id, round_number,
                     self.match_state.phase, winning_team, win_condition
                 )
                 logger.info(f"Created round record for match {self.match_id}, round {round_number}")
-            
+
             # first, create player states and get their ids
             player_state_ids = await batch_create_player_states(
                 self.match_id, round_number, self.player_states
             )
-            logger.info(f"Created {len(player_state_ids)} player states for match {self.match_id}, round {round_number}")
-            
-            # then, explicitly create weapon states using the ids
-            if player_state_ids:
+
+            # then, explicitly create weapon states
+            if self.weapon_states:
                 weapon_count = await batch_create_player_weapons(
-                    self.match_id, round_number, self.player_states, player_state_ids
+                    self.match_id, round_number, self.owner_steam_id, self.weapon_states,
                 )
-                logger.info(f"Created {weapon_count} weapon states for match {self.match_id}, round {round_number}")
-            
+
             # finally, update match stats
             if self.player_states:
                 await batch_update_player_match_stats(self.match_id, self.player_states)
-                
+
             # mark round as persisted
             self.rounds_persisted.add(round_number)
-            
+
         except Exception as e:
             logger.error(f"Error persisting round data for match {self.match_id}, round {round_number}: {str(e)}")
             logger.exception(e)
@@ -361,7 +359,7 @@ class MatchProcessor:
 
             # mark match as completed
             success = await complete_match(
-                self.match_id, ct_score, t_score, total_rounds
+                self.match_id, ct_score, t_score, total_rounds, self.match_state.timestamp
             )
             
             if success:

@@ -23,7 +23,7 @@ from gsi.django_integration import (
 )
 
 # import payloadextractor and dataclasses
-from gsi.payloadextractor import PayloadExtractor, MatchState, PlayerState
+from gsi.payloadextractor import PayloadExtractor, MatchState, PlayerState, WeaponState
 
 class MatchProcessor:
     """
@@ -52,7 +52,9 @@ class MatchProcessor:
 
         # match metadata
         self.match_state: Optional[MatchState] = None
+        self.player_states_history = []
         self.player_states: Dict[str, PlayerState] = {}
+        self.weapon_states_history = []
         self.weapon_states: Dict[str, WeaponState] = {}
         
         # persistence tracking
@@ -70,45 +72,76 @@ class MatchProcessor:
 
         logger.info(f"Match processor initialized for match {self.match_id} owned by {owner_steam_id}")
 
-    async def process_payload(self, payload: Dict, is_owner_playing: bool) -> None:
+    def _debug_log_payload(self, payload: Dict, indent_level: int = 0) -> None:
         """
-        Process a GSI payload for this match.
-        
-        Delegates extraction to PayloadExtractor, accumulates state changes,
-        and triggers database operations at appropriate moments.
-        
-        Args:
-            payload: The GSI payload from CS2
-            is_owner_playing: Whether the payload represents the client owner's state
-        """
-        try:
-            # update the last activity timestamp
-            self.last_update_time = time.time()
+        Log a payload structure for debugging purposes.
 
-            # log player information on first payload
+        Args:
+            payload: Dictionary or JSON-like structure to log
+            indent_level: Current indentation level
+        """
+        if not isinstance(payload, dict):
+            logger.debug(f"Payload is not a dictionary: {payload}")
+            return
+
+        for key, value in payload.items():
+            indent_str = ' ' * indent_level
+            if not isinstance(value, dict):
+                # for non-dictionary values, log key-value pair
+                logger.debug(f"{indent_str}{key}: {value}")
+            else:
+                # for nested dictionaries, log key and recurse
+                logger.debug(f"{indent_str}{key}:")
+                self._debug_log_payload(value, indent_level + 2)
+
+    def _add_player_state(self, player_state: PlayerState) -> None:
+        """Add a player state to history and update current state"""
+        # add to chronological history
+        self.player_states_history.append(player_state)
+        
+        # update current state lookup
+        self.player_states[player_state.steam_id] = player_state
+        
+        # log for debugging
+        logger.debug(f"Added player state for {player_state.steam_id}, total states: {len(self.player_states_history)}")
+
+    def _add_weapon_states(self, weapon_states: Dict[str, WeaponState]) -> None:
+        """Add weapon states to history and update current states"""
+        # add each weapon to history
+        for slot, weapon_state in weapon_states.items():
+            self.weapon_states_history.append(weapon_state)
+            self.weapon_states[slot] = weapon_state
+        
+        # log for debugging
+        logger.debug(f"Added {len(weapon_states)} weapon states, total: {len(self.weapon_states_history)}")
+
+    async def process_payload(self, payload: Dict, is_owner_playing: bool) -> None:
+        try:
+            # update timestamp
+            self.last_update_time = time.time()
+            
+            # log initial payload info
             if not self.match_state and 'player' in payload:
                 player_name = payload.get('player', {}).get('name', 'unknown')
                 player_steam_id = payload.get('player', {}).get('steamid', 'unknown')
-                
                 if is_owner_playing:
                     logger.info(f"Match {self.match_id} associated with player {player_name} ({player_steam_id})")
                 else:
                     logger.info(f"Match {self.match_id} processing spectated player {player_name} ({player_steam_id})")
 
-            # delegate all extraction and change detection to payloadextractor
+            # extract data
             processed_data = self.extractor.process_payload(payload)
-            
-            # extract components from processed data
             match_state = processed_data['match_state']
             player_state = processed_data['player_state']
             weapon_states = processed_data['weapon_states']
             changes = processed_data['changes']
+            timestamp = processed_data['timestamp']
             
-            # check if we need to create the match record
+            # create match if needed
             if match_state and not self.match_persisted:
                 await self._ensure_match_exists(match_state)
             
-            # handle round transitions if detected
+            # handle round transitions
             if match_state and self.match_state and match_state.round != self.match_state.round:
                 logger.info(f"Match {self.match_id}: Round change from {self.match_state.round} to {match_state.round}")
                 await self._process_round_transition(
@@ -117,37 +150,31 @@ class MatchProcessor:
                     phase=match_state.phase
                 )
             
-            # update match state and persist match changes
+            # update match state
             if match_state:
-                # if match exists and has changed, update it
                 if self.match_persisted and self.match_state and changes['match']:
                     await update_match(self.match_id, match_state)
-                
-                # update internal state
                 self.match_state = match_state
                 self.current_round = match_state.round
-                
-                # check if the match is completed
                 if match_state.phase == "gameover" and not self.is_completed:
                     logger.info(f"Match {self.match_id}: Game over detected")
                     await self._handle_match_completion()
             
-            # update player state if owner is playing
+            # process player data
             if is_owner_playing:
+                # store player state with timestamp-based key
                 if player_state:
-                    # first ensure the steam account exists
                     await ensure_steam_account(player_state.steam_id, player_state.name)
-                    # store the player state
-                    self.player_states[player_state.steam_id] = player_state
+                    self._add_player_state(player_state)
                 
-                # new: store weapon states separately
+                # store weapon states with timestamp+slot keys
                 if weapon_states:
-                    self.weapon_states = weapon_states
+                    self._add_weapon_states(weapon_states)
                 
-                # process significant events for analytics
+                # process events
                 if 'significant_events' in changes:
                     self._process_significant_events(changes['significant_events'])
-                
+                    
         except Exception as e:
             logger.error(f"Error processing payload in match {self.match_id}: {str(e)}")
             logger.exception(e)
@@ -306,26 +333,51 @@ class MatchProcessor:
                 )
                 logger.info(f"Created round record for match {self.match_id}, round {round_number}")
 
-            # first, create player states and get their ids
-            player_state_ids = await batch_create_player_states(
-                self.match_id, round_number, self.player_states
+            # extract states for this round only
+            player_states_to_save = {state.steam_id: state for state in self.player_states_history
+                               if state.steam_id in self.player_states}
+
+            # now, with dictionary comprehension completed, persist playerstates
+            await batch_create_player_states(
+                self.match_id, round_number, player_states_to_save
             )
 
-            # then, explicitly create weapon states
-            if self.weapon_states:
-                weapon_count = await batch_create_player_weapons(
-                    self.match_id, round_number, self.owner_steam_id, self.weapon_states,
-                )
+            # log history of weapon state data
+            logger.info(f"Persisting {len(self.weapon_states_history)} weapon states for round {round_number}")
 
-            # finally, update match stats
-            if self.player_states:
-                await batch_update_player_match_stats(self.match_id, self.player_states)
-
+            # group weapon states by player for batch processing
+            weapons_by_player = {}
+            for weapon in self.weapon_states_history:
+                steam_id = weapon.steam_id
+                if steam_id not in weapons_by_player:
+                    weapons_by_player[steam_id] = {}
+                # add weapon with slot as key
+                for slot, ws in self.weapon_states.items():
+                    if ws.name == weapon.name:
+                        weapons_by_player[steam_id][slot] = weapon
+                        break
+            
+            # save weapon states for each player
+            for steam_id, weapons in weapons_by_player.items():
+                if weapons:
+                    weapon_count = await batch_create_player_weapons(
+                        self.match_id, round_number, steam_id, weapons
+                    )
+                    logger.info(f"Created {weapon_count} weapon states for player {steam_id}")
+            
+            # update match stats
+            if player_states_to_save:
+                await batch_update_player_match_stats(self.match_id, player_states_to_save)
+            
+            # clear history for next round
+            self.player_states_history = []
+            self.weapon_states_history = []
+            
             # mark round as persisted
             self.rounds_persisted.add(round_number)
 
         except Exception as e:
-            logger.error(f"Error persisting round data for match {self.match_id}, round {round_number}: {str(e)}")
+            logger.error(f"Error persisting round data: {str(e)}")
             logger.exception(e)
 
     async def _handle_match_completion(self) -> None:

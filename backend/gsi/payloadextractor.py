@@ -39,6 +39,7 @@ class WeaponState:
     ammo_clip_max: Optional[int] = None # max ammo in clip
     ammo_reserve: Optional[int] = None  # reserve ammo
     paintkit: str = "default"           # weapon skin
+    steam_id: Optional[str] = None      # owner's steam ID
     state_timestamp: int = field(default_factory=lambda: int(time.time()))  # unix timestamp
 
 @dataclass
@@ -262,6 +263,7 @@ class PayloadExtractor:
             ammo_clip_max=weapon_data.get("ammo_clip_max"),
             ammo_reserve=weapon_data.get("ammo_reserve"),
             paintkit=weapon_data.get("paintkit", "default"),
+            steam_id=weapon_data.get("steam_id"),
             state_timestamp=timestamp
         )
 
@@ -281,6 +283,7 @@ class PayloadExtractor:
         if 'player' not in payload or 'weapons' not in payload['player']:
             return weapons
 
+        player_steam_id = payload.get('player', {}).get('steamid')
         weapons_data = payload['player'].get('weapons', {})
 
         # process each weapon
@@ -292,6 +295,7 @@ class PayloadExtractor:
 
             # use existing extract_weapon_state method
             weapon = self.extract_weapon_state(weapon_data, timestamp)
+            weapon.steam_id = player_steam_id
             weapons[slot] = weapon
 
         return weapons
@@ -478,6 +482,7 @@ class PayloadExtractor:
                     if 'state' in weapon_changes and weapon_changes['state']['new'] == 'active':
                         changes['significant_events'].append({
                             'type': 'weapon_activated',
+                            'player_id': new_weapon.steam_id,
                             'weapon': new_weapon.name,
                             'timestamp': new_weapon.state_timestamp
                         })
@@ -518,7 +523,6 @@ class PayloadExtractor:
         # update weapon state
         if weapon_states:
             self.weapon_states = weapon_states
-
             
         # update round state and history
         if round_state:

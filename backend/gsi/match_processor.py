@@ -62,9 +62,9 @@ class MatchProcessor:
         # metadata fields
         self.match_state: Optional[MatchState] = None
         self.round_state: Optional[RoundState] = None
-        self.player_states_history = []
+        self.player_states_history: List[PlayerState]
         self.player_states: Dict[str, PlayerState] = {}
-        self.weapon_states_history = []
+        self.weapon_states_history: List[Dict[str, WeaponState]]
         self.weapon_states: Dict[str, WeaponState] = {}
         
         # persistence tracking
@@ -140,6 +140,14 @@ class MatchProcessor:
             round_logger.info(f"Match {self.match_id}: Round {new_state.round_number} phase changed to 'over'")
             # store in extractor's round history for later reference
             self.extractor.round_history[new_state.round_number] = new_state
+
+            # trigger an immediate update of the round winner in the database
+            if new_state.win_team:
+                asyncio.create_task(self._update_round_winner(
+                    new_state.round_number,
+                    new_state.win_team,
+                    new_state.win_condition
+                ))
 
     def _log_initial_payload_info(self, payload: Dict, is_owner_playing: bool) -> None:
         """Log initial information about this match"""
@@ -217,6 +225,38 @@ class MatchProcessor:
 
         # add to local state
         self._add_weapon_states(weapon_states)
+
+    async def _update_round_winner(self, round_number: int, winning_team: str, win_condition: str) -> None:
+        """
+        Update the round winner in the database immediately when detected.
+
+        Args:
+            round_number: The round number
+            winning_team: The winning team
+            win_condition: How the round was won
+        """
+        # Check if round exists
+        round_exists_in_db = await round_exists(self.match_id, round_number)
+
+        if round_exists_in_db:
+            # Update existing round with winner info
+            success = await update_round_winner(
+                self.match_id, round_number, winning_team, win_condition
+            )
+            if success:
+                round_logger.info(f"Match {self.match_id}: Updated round {round_number} winner to {winning_team} in database")
+            else:
+                round_logger.warning(f"Match {self.match_id}: Failed to update round {round_number} winner in database")
+        else:
+            # Create new round with winner info
+            round_id = await create_round(
+                self.match_id, round_number, "over", winning_team, win_condition,
+                self.match_state.timestamp if self.match_state else int(time.time())
+            )
+            if round_id:
+                round_logger.info(f"Match {self.match_id}: Created round {round_number} with winner {winning_team} in database")
+            else:
+                round_logger.warning(f"Match {self.match_id}: Failed to create round {round_number} with winner in database")
 
     def _process_game_events(self, changes: Dict) -> None:
         """Process significant game events for analytics"""
@@ -379,65 +419,44 @@ class MatchProcessor:
             # check if round already exists
             round_already_exists = await round_exists(self.match_id, round_number)
 
-            # get round winner information
-            winning_team = self.extractor.get_round_winner(round_number)
-            win_condition = self.extractor.get_round_win_condition(round_number)
-
-            # create or update round
-            if round_already_exists:
+            if not round_already_exists:
+                # if the round isn't already instantiated, there's probably something wrong
+                highlight_logger.warning(
+                    f"Round {round_number} of {self.match_id} doesn't exist, " +
+                     "according to _persist_round_data"
+                )
+                winning_team = self.extractor.get_round_winner(round_number)
+                win_condition = self.extractor.get_round_win_condition(round_number)
                 # only update winner info if round exists
-                if winning_team:
-                    await update_round_winner(
-                        self.match_id, round_number, winning_team, win_condition
-                    )
-            else:
-                # create new round
                 await create_round(
                     self.match_id, round_number,
-                    self.match_state.phase, winning_team, win_condition
+                    self.round_state.phase if self.round_state else "over", 
+                    winning_team, win_condition
                 )
                 logger.info(f"Created round record for match {self.match_id}, round {round_number}")
 
-            # extract states for this round only
-            player_states_to_save = {state.steam_id: state for state in self.player_states_history
-                               if state.steam_id in self.player_states}
-
-            # now, with dictionary comprehension completed, persist playerstates
+            # now, with list comprehension completed, persist playerstates
             await batch_create_player_states(
-                self.match_id, round_number, player_states_to_save
+                self.match_id, round_number, self.player_states_history
             )
 
-            # log history of weapon state data
-            logger.info(f"Persisting {len(self.weapon_states_history)} weapon states for round {round_number}")
+            # get full length of weapon state history
+            total_ws = sum(len(d) for d in self.weapon_states_history)
 
-            # group weapon states by player for batch processing
-            weapons_by_player = {}
-            for weapon in self.weapon_states_history:
-                steam_id = weapon.steam_id
-                if steam_id not in weapons_by_player:
-                    weapons_by_player[steam_id] = {}
-                # add weapon with slot as key
-                for slot, ws in self.weapon_states.items():
-                    if ws.name == weapon.name:
-                        weapons_by_player[steam_id][slot] = weapon
-                        break
-            
-            # save weapon states for each player
-            for steam_id, weapons in weapons_by_player.items():
-                if weapons:
-                    weapon_count = await batch_create_player_weapons(
-                        self.match_id, round_number, steam_id, weapons
-                    )
-                    logger.info(f"Created {weapon_count} weapon states for player {steam_id}")
-            
+            # log history of weapon state data
+            logger.info(f"Persisting {total_ws} weapon states for round {round_number}")           
+
+            # call batch weaponstate creation method
+            await batch_create_player_weapons(
+
             # update match stats
-            if player_states_to_save:
-                await update_player_match_stats(self.match_id, player_states_to_save)
-            
+            if self.player_states_history:
+                await update_player_match_stats(self.match_id, self.player_states_history[-1])
+
             # clear history for next round
             self.player_states_history = []
             self.weapon_states_history = []
-            
+
             # mark round as persisted
             self.rounds_persisted.add(round_number)
 
@@ -520,13 +539,13 @@ class MatchProcessor:
 
     def _add_weapon_states(self, weapon_states: Dict[str, WeaponState]) -> None:
         """Add weapon states to history and update current states"""
-        # add each weapon to history
-        for slot, weapon_state in weapon_states.items():
-            self.weapon_states_history.append(weapon_state)
-            self.weapon_states[slot] = weapon_state
+        # add the dictionary to the history (list of dicts)
+        self.weapon_states_history.append(weapon_state)
+        self.weapon_states = weapon_state
         
-        # log for debugging
-        logger.debug(f"Added {len(weapon_states)} weapon states, total: {len(self.weapon_states_history)}")
+        # log for debugging (get total cumulative length
+        total_states = sum(len(d) for d in self.weapon_states_history)
+        logger.debug(f"Added {len(weapon_states)} weapon states, total: {total_states}")
 
     def _has_match_changes(self, new_state: MatchState) -> bool:
         """Check if there are changes between current and new match state"""

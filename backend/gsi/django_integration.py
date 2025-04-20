@@ -1,7 +1,6 @@
 # gsi/django_integration.py
 import os
 import django
-import logging
 import time
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
@@ -15,8 +14,9 @@ django.setup()
 
 # import data classes for type annotations
 from gsi.payloadextractor import MatchState, PlayerState, WeaponState, RoundState
+from gsi.logging_service import get_colored_logger
 
-logger = logging.getLogger('django_integration')
+logger = get_colored_logger('DJANGO_INTEGRATION', 'light_yellow')
 
 def convert_unix_timestamp_to_datetime(unix_timestamp: int) -> datetime:
     """
@@ -503,7 +503,7 @@ async def create_player_round_state(match_id: str, round_number: int, player_sta
     return await _create_player_round_state_sync(match_id, round_number, player_state)
 
 async def batch_create_player_states(match_id: str, round_number: int,
-                                  player_states: Dict[str, PlayerState]) -> Dict[str, int]:
+                                  player_states: List[PlayerState]) -> int:
     """
     Create multiple player states in a single transaction.
     ONLY creates player states - weapon states must be created separately.
@@ -511,29 +511,75 @@ async def batch_create_player_states(match_id: str, round_number: int,
     Args:
         match_id: The match ID
         round_number: The round number
-        player_states: Dictionary of player states to persist
+        player_states: List of player states to persist
 
     Returns:
-        Dictionary mapping steam_ids to their player_round_state_ids
+        Number of player states created
     """
     try:
-        results = {}
+        count = 0
 
-        for steam_id, player_state in player_states.items():
-            # create player round state only
+        for player_state in player_states:
+            # check if a duplicate record exists (if so, skip it)
+            seen = await player_round_state_exists(match_id, round_number, player_state)
+            if seen is True:
+                continue
+
+            # otherwise, create player round state
             player_round_state_id = await create_player_round_state(
                 match_id, round_number, player_state
             )
 
             if player_round_state_id:
-                # store result - no weapon creation here
-                results[steam_id] = player_round_state_id
+                count += 1
 
-        logger.info(f"Batch created {len(results)} player states for match {match_id}, round {round_number}")
-        return results
+        logger.info(f"Batch created {count} player states for match {match_id}, round {round_number}")
+        return count
     except Exception as e:
         logger.error(f"Error batch creating player states: {str(e)}")
-        return {}
+        return 0
+
+@sync_to_async
+def _player_round_state_exists_sync(match_id: str, round_number: int,
+                                    player_state: PlayerState) -> bool:
+    """
+    Synchronous implementation. 
+
+    Check to see if a given PlayerRoundState exists in the database records.
+    """
+    # Key (match_id, round_number, steam_account_id, state_timestamp)=(de_mirage_casual_76561198277157609_9a81c0b0-2e6e-4ae2-b3a3-efb89acf676d, 1, 76561198277157609, 2025-04-20 08:49:59+00) already exists.
+    try:
+        state_time = convert_unix_timestamp_to_datetime(player_state.state_timestamp) 
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT COUNT(*) FROM stats_playerroundstate
+                WHERE
+                    match_id = %s AND
+                    round_number = %s AND
+                    steam_account_id = %s AND
+                    state_timestamp = %s
+                """,
+                [
+                    match_id,
+                    round_number,
+                    player_state.steam_id,
+                    state_time
+                ]
+            )
+            return cursor.fetchone()[0] > 0
+    except Exception as e:
+        logger.error(f"Error checking round existence: {str(e)}")
+        return False
+
+async def player_round_state_exists(match_id: str, round_number: int,
+                                    player_state: PlayerState) -> bool:
+    """
+    Check to see if a given PlayerRoundState exists in the database records.
+    """
+    return await _player_round_state_exists_sync(
+        match_id, round_number, player_state
+    )
 
 #==============================================================================
 # player weapons operations

@@ -1,0 +1,101 @@
+{% extends 'base.html' %}
+
+{% block title %}CounterTrak - CS2 Performance Statistics Tracker{% endblock %}
+
+{% block content %}
+<div class="row align-items-center py-5">
+    <div class="col-lg-6">
+        <h1 class="display-4 fw-bold">Track your CS2 performance with precision</h1>
+        <p class="lead my-4">
+            CounterTrak is a lightweight CS2 statistics tracker that provides deep insights into your gameplay through real-time data collection.
+        </p>
+        <div class="d-flex gap-3">
+            <a href="{% url 'register' %}" class="btn btn-ct-primary btn-lg">Get Started</a>
+            <a href="{% url 'setup_guide' %}" class="btn btn-outline-secondary btn-lg">How It Works</a>
+        </div>
+    </div>
+    <div class="col-lg-6 text-center">
+        <img src="https://placehold.co/600x400/1e3a8a/ffffff?text=CounterTrak" class="img-fluid rounded shadow" alt="CounterTrak" style="max-width: 90%;">
+    </div>
+</div>
+
+<div class="row my-5">
+    <div class="col-12 text-center mb-4">
+        <h2>Why CounterTrak?</h2>
+        <p class="lead">Beauty through simplicity, elegance through intelligence</p>
+    </div>
+
+    <div class="col-md-4 mb-4">
+        <div class="card h-100 stats-card">
+            <div class="card-body text-center">
+                <div class="mb-3">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" fill="#1e3a8a" class="bi bi-speedometer2" viewBox="0 0 16 16">
+                        <path d="M8 4a.5.5 0 0 1 .5.5V6a.5.5 0 0 1-1 0V4.5A.5.5 0 0 1 8 4zM3.732 5.732a.5.5 0 0 1 .707 0l.915.914a.5.5 0 1 1-.708.708l-.914-.915a.5.5 0 0 1 0-.707zM2 10a.5.5 0 0 1 .5-.5h1.586a.5.5 0 0 1 0 1H2.5A.5.5 0 0 1 2 10zm9.5 0a.5.5 0 0 1 .5-.5h1.5a.5.5 0 0 1 0 1H12a.5.5 0 0 1-.5-.5zm.754-4.246a.389.389 0 0 0-.527-.02L7.547 9.31a.91.91 0 1 0 1.302 1.258l3.434-4.297a.389.389 0 0 0-.029-.518z"/>
+                        <path fill-rule="evenodd" d="M0 10a8 8 0 1 1 15.547 2.661c-.442 1.253-1.845 1.602-2.932 1.25C11.309 13.488 9.475 13 8 13c-1.474 0-3.31.488-4.615.911-1.087.352-2.49.003-2.932-1.25A7.988 7.988 0 0 1 0 10zm8-7a7 7 0 0 0-6.603 9.329c.203.575.923.876 1.68.63C4.397 12.533 6.358 12 8 12s3.604.532 4.923.96c.757.245 1.477-.056 1.68-.631A7 7 0 0 0 8 3z"/>
+                    </svg>
+                </div>
+                <h3>Lightweight</h3>
+                <p>Minimal resource footprint with no impact on your game performance. CounterTrak works silently in the background.</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4 mb-4">
+        <div class="card h-100 stats-card">
+            <div class="card-body text-center">
+                <div class="mb-3">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" fill="#1e3a8a" class="bi bi-graph-up" viewBox="0 0 16 16">
+                        <path fill-rule="evenodd" d="M0 0h1v15h15v1H0V0Zm14.817 3.113a.5.5 0 0 1 .07.704l-4.5 5.5a.5.5 0 0 1-.74.037L7.06 6.767l-3.656 5.027a.5.5 0 0 1-.808-.588l4-5.5a.5.5 0 0 1 .758-.06l2.609 2.61 4.15-5.073a.5.5 0 0 1 .704-.07Z"/>
+                    </svg>
+                </div>
+                <h3>Insightful</h3>
+                <p>Advanced analytics that give you actionable insights about your weapon performance, economy management, and more.</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4 mb-4">
+        <div class="card h-100 stats-card">
+            <div class="card-body text-center">
+                <div class="mb-3">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" fill="#1e3a8a" class="bi bi-shield-check" viewBox="0 0 16 16">
+                        <path d="M5.338 1.59a61.44 61.44 0 0 0-2.837.856.481.481 0 0 0-.328.39c-.554 4.157.726 7.19 2.253 9.188a10.725 10.725 0 0 0 2.287 2.233c.346.244.652.42.893.533.12.057.218.095.293.118a.55.55 0 0 0 .101.025.615.615 0 0 0 .1-.025c.076-.023.174-.061.294-.118.24-.113.547-.29.893-.533a10.726 10.726 0 0 0 2.287-2.233c1.527-1.997 2.807-5.031 2.253-9.188a.48.48 0 0 0-.328-.39c-.651-.213-1.75-.56-2.837-.855C9.552 1.29 8.531 1.067 8 1.067c-.53 0-1.552.223-2.662.524zM5.072.56C6.157.265 7.31 0 8 0s1.843.265 2.928.56c1.11.3 2.229.655 2.887.87a1.54 1.54 0 0 1 1.044 1.262c.596 4.477-.787 7.795-2.465 9.99a11.775 11.775 0 0 1-2.517 2.453 7.159 7.159 0 0 1-1.048.625c-.28.132-.581.24-.829.24s-.548-.108-.829-.24a7.158 7.158 0 0 1-1.048-.625 11.777 11.777 0 0 1-2.517-2.453C1.928 10.487.545 7.169 1.141 2.692A1.54 1.54 0 0 1 2.185 1.43 62.456 62.456 0 0 1 5.072.56z"/>
+                        <path d="M10.854 5.146a.5.5 0 0 1 0 .708l-3 3a.5.5 0 0 1-.708 0l-1.5-1.5a.5.5 0 1 1 .708-.708L7.5 7.793l2.646-2.647a.5.5 0 0 1 .708 0z"/>
+                    </svg>
+                </div>
+                <h3>Secure</h3>
+                <p>CounterTrak only collects the data you want it to. Your privacy is respected, and we only capture game-specific statistics.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-5 py-4 bg-light rounded">
+    <div class="col-12 text-center mb-4">
+        <h2>Trusted by players</h2>
+    </div>
+    
+    <div class="col-md-4 text-center">
+        <div class="stats-value">{{ total_matches }}</div>
+        <div class="stats-label">Matches Tracked</div>
+    </div>
+    
+    <div class="col-md-4 text-center">
+        <div class="stats-value">{{ total_players }}</div>
+        <div class="stats-label">Players Using CounterTrak</div>
+    </div>
+    
+    <div class="col-md-4 text-center">
+        <div class="stats-value">{{ total_kills }}</div>
+        <div class="stats-label">Total Frags Recorded</div>
+    </div>
+</div>
+
+<div class="row mt-5">
+    <div class="col-12 text-center">
+        <h2>Ready to elevate your game?</h2>
+        <p class="lead mb-4">Start tracking your CS2 performance in just three simple steps</p>
+        <a href="{% url 'register' %}" class="btn btn-ct-primary btn-lg px-5">Get Started Now</a>
+    </div>
+</div>
+{% endblock %}

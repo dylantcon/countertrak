@@ -1,0 +1,74 @@
+{% extends 'base.html' %}
+
+{% block title %}Link Steam Account | CounterTrak{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card stats-card">
+            <div class="card-header">
+                <h4>Link Steam Account</h4>
+            </div>
+            <div class="card-body">
+                <form method="POST">
+                    {% csrf_token %}
+                    
+                    {% if form.errors %}
+                    <div class="alert alert-danger">
+                        <ul class="mb-0">
+                            {% for field in form %}
+                                {% for error in field.errors %}
+                                    <li>{{ field.label }}: {{ error }}</li>
+                                {% endfor %}
+                            {% endfor %}
+                            
+                            {% for error in form.non_field_errors %}
+                                <li>{{ error }}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                    {% endif %}
+                    
+                    <div class="mb-3">
+                        <label for="id_steam_id" class="form-label">Steam ID (64-bit)</label>
+                        <input type="text" name="steam_id" id="id_steam_id" class="form-control" placeholder="e.g., 76561198015777160" required>
+                        <div class="form-text">
+                            <p>Your 17-digit Steam ID is required to identify your CS2 game client.</p>
+                            <p>To find your Steam ID:</p>
+                            <ol>
+                                <li>Open Steam and go to your profile</li>
+                                <li>Right-click anywhere on your profile page and select "Copy Page URL"</li>
+                                <li>The URL will look like: <code>https://steamcommunity.com/profiles/76561198123456789/</code></li>
+                                <li>The number after "profiles/" is your Steam ID</li>
+                            </ol>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="id_player_name" class="form-label">In-Game Name</label>
+                        <input type="text" name="player_name" id="id_player_name" class="form-control" placeholder="Your in-game name" required>
+                        <div class="form-text">The name you use in CS2.</div>
+                    </div>
+                    
+                    <div class="d-grid gap-2">
+                        <button type="submit" class="btn btn-ct-primary">Link Account</button>
+                    </div>
+                </form>
+                
+                <hr>
+                
+                <div class="alert alert-info">
+                    <h5 class="alert-heading">Why do we need your Steam ID?</h5>
+                    <p>Your Steam ID is used to:</p>
+                    <ul>
+                        <li>Correctly identify your game client when receiving game state data</li>
+                        <li>Associate match statistics with your account</li>
+                        <li>Generate a custom configuration file for your CS2 installation</li>
+                    </ul>
+                    <p class="mb-0">We only collect gameplay statistics and do not access any sensitive Steam account information.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

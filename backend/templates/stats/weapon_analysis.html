@@ -1,0 +1,316 @@
+{% extends 'base.html' %}
+
+{% block title %}Weapon Analysis | CounterTrak{% endblock %}
+
+{% block extra_css %}
+<style>
+    .performance-card {
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        transition: transform 0.3s ease;
+        margin-bottom: 20px;
+    }
+    
+    .performance-card:hover {
+        transform: translateY(-5px);
+    }
+    
+    .effectiveness-high {
+        background-color: rgba(25, 135, 84, 0.1);
+        border-left: 4px solid #198754;
+    }
+    
+    .effectiveness-medium {
+        background-color: rgba(13, 110, 253, 0.1);
+        border-left: 4px solid #0d6efd;
+    }
+    
+    .effectiveness-low {
+        background-color: rgba(220, 53, 69, 0.1);
+        border-left: 4px solid #dc3545;
+    }
+    
+    .insight-strength {
+        background-color: rgba(25, 135, 84, 0.1);
+        border-left: 4px solid #198754;
+    }
+    
+    .insight-improvement {
+        background-color: rgba(220, 53, 69, 0.1);
+        border-left: 4px solid #dc3545;
+    }
+    
+    .insight-recommendation {
+        background-color: rgba(13, 110, 253, 0.1);
+        border-left: 4px solid #0d6efd;
+    }
+    
+    .insight-insight {
+        background-color: rgba(255, 193, 7, 0.1);
+        border-left: 4px solid #ffc107;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1 class="mb-4">Advanced Weapon Analysis</h1>
+        <p class="lead">Analyzing {{ steam_account.player_name }}'s weapon performance patterns</p>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        <div class="alert alert-info">
+            <h5 class="alert-heading">About Weapon Analysis</h5>
+            <p>This advanced analysis examines your weapon usage patterns, effectiveness, and economic context to provide actionable insights for improving your gameplay.</p>
+            <p class="mb-0">Data is analyzed across all matches to identify optimal weapon choices based on your playing style and economic conditions.</p>
+        </div>
+    </div>
+</div>
+
+<!-- Weapon effectiveness overview -->
+<div class="row">
+    <div class="col-md-6">
+        <div class="card stats-card mb-4">
+            <div class="card-header">
+                <h5>Weapon Effectiveness Overview</h5>
+            </div>
+            <div class="card-body">
+                {% if weapon_analysis and weapon_analysis|length > 0 %}
+                    <div class="row">
+                        {% for weapon in weapon_analysis %}
+                            {% if weapon.total_kills > 0 %}
+                                <div class="col-md-6 mb-3">
+                                    <div class="card performance-card 
+                                        {% if weapon.avg_kills_when_active > 1 %}
+                                            effectiveness-high
+                                        {% elif weapon.avg_kills_when_active > 0.5 %}
+                                            effectiveness-medium
+                                        {% else %}
+                                            effectiveness-low
+                                        {% endif %}
+                                    ">
+                                        <div class="card-body">
+                                            <h6>{{ weapon.weapon__name|slice:"7:" }}</h6>
+                                            <p class="mb-1"><strong>Avg. Kills:</strong> {{ weapon.avg_kills_when_active|floatformat:2 }}</p>
+                                            <p class="mb-1"><strong>Times Used:</strong> {{ weapon.times_active }}</p>
+                                            <p class="mb-0">
+                                                <strong>Effectiveness:</strong>
+                                                {% if weapon.avg_kills_when_active > 1 %}
+                                                    <span class="badge bg-success">Excellent</span>
+                                                {% elif weapon.avg_kills_when_active > 0.5 %}
+                                                    <span class="badge bg-primary">Good</span>
+                                                {% elif weapon.avg_kills_when_active > 0.25 %}
+                                                    <span class="badge bg-warning text-dark">Average</span>
+                                                {% else %}
+                                                    <span class="badge bg-danger">Poor</span>
+                                                {% endif %}
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                            {% endif %}
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <p class="text-center">No weapon data available yet. Play more matches with the GSI config installed to collect data.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-6">
+        <div class="card stats-card mb-4">
+            <div class="card-header">
+                <h5>Economic Impact Analysis</h5>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-secondary">
+                    <h6>Economic Efficiency Analysis</h6>
+                    <p>This analysis shows the relationship between your investment in weapons (equip value) and your performance (kills).</p>
+                    
+                    {% if economic_data %}
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>Equipment Value</th>
+                                        <th>Avg. Kills</th>
+                                        <th>Efficiency</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td>Low (&lt;$2000)</td>
+                                        <td>{{ economic_data|dictsortbykey:"equip_value"|slice:":5"|dictsort:"kills"|last.kills|floatformat:1 }}</td>
+                                        <td>
+                                            {% with eco_eff=economic_data|dictsortbykey:"equip_value"|slice:":5"|dictsort:"kills"|last.kills|floatformat:1 %}
+                                                {% if eco_eff > 1 %}
+                                                    <span class="badge bg-success">High</span>
+                                                {% elif eco_eff > 0.5 %}
+                                                    <span class="badge bg-primary">Medium</span>
+                                                {% else %}
+                                                    <span class="badge bg-danger">Low</span>
+                                                {% endif %}
+                                            {% endwith %}
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td>Medium ($2000-$4000)</td>
+                                        <td>{{ economic_data|dictsortbykey:"equip_value"|slice:"5:15"|dictsort:"kills"|last.kills|floatformat:1 }}</td>
+                                        <td>
+                                            {% with med_eff=economic_data|dictsortbykey:"equip_value"|slice:"5:15"|dictsort:"kills"|last.kills|floatformat:1 %}
+                                                {% if med_eff > 1 %}
+                                                    <span class="badge bg-success">High</span>
+                                                {% elif med_eff > 0.5 %}
+                                                    <span class="badge bg-primary">Medium</span>
+                                                {% else %}
+                                                    <span class="badge bg-danger">Low</span>
+                                                {% endif %}
+                                            {% endwith %}
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td>High (&gt;$4000)</td>
+                                        <td>{{ economic_data|dictsortbykey:"equip_value"|slice:"15:"|dictsort:"kills"|last.kills|floatformat:1 }}</td>
+                                        <td>
+                                            {% with high_eff=economic_data|dictsortbykey:"equip_value"|slice:"15:"|dictsort:"kills"|last.kills|floatformat:1 %}
+                                                {% if high_eff > 1 %}
+                                                    <span class="badge bg-success">High</span>
+                                                {% elif high_eff > 0.5 %}
+                                                    <span class="badge bg-primary">Medium</span>
+                                                {% else %}
+                                                    <span class="badge bg-danger">Low</span>
+                                                {% endif %}
+                                            {% endwith %}
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <p>Insufficient economic data to analyze. Play more matches to collect data.</p>
+                    {% endif %}
+                </div>
+                
+                <div class="mt-3">
+                    <p><strong>Key Insight:</strong> Higher efficiency (kills per dollar spent) means better economic decision-making.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Detailed weapon analysis -->
+<div class="row">
+    <div class="col-12">
+        <div class="card stats-card">
+            <div class="card-header">
+                <h5>Detailed Weapon Performance</h5>
+            </div>
+            <div class="card-body">
+                {% if weapon_analysis %}
+                    <div class="table-responsive">
+                        <table class="table table-stats">
+                            <thead>
+                                <tr>
+                                    <th>Weapon</th>
+                                    <th>Type</th>
+                                    <th>Times Active</th>
+                                    <th>Rounds Used</th>
+                                    <th>Total Kills</th>
+                                    <th>Avg. Kills</th>
+                                    <th>Avg. Money</th>
+                                    <th>Effectiveness</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for weapon in weapon_analysis %}
+                                <tr>
+                                    <td>{{ weapon.weapon__name|slice:"7:" }}</td>
+                                    <td>{{ weapon.weapon__type }}</td>
+                                    <td>{{ weapon.times_active }}</td>
+                                    <td>{{ weapon.rounds_used }}</td>
+                                    <td>{{ weapon.total_kills|default:0 }}</td>
+                                    <td>{{ weapon.avg_kills_when_active|floatformat:2 }}</td>
+                                    <td>${{ weapon.avg_money|floatformat:0 }}</td>
+                                    <td>
+                                        {% if weapon.avg_kills_when_active > 1 %}
+                                            <span class="badge bg-success">Excellent</span>
+                                        {% elif weapon.avg_kills_when_active > 0.5 %}
+                                            <span class="badge bg-primary">Good</span>
+                                        {% elif weapon.avg_kills_when_active > 0.25 %}
+                                            <span class="badge bg-warning text-dark">Average</span>
+                                        {% else %}
+                                            <span class="badge bg-danger">Poor</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <p class="text-center">No weapon data available yet. Play more matches with the GSI config installed to collect data.</p>
+                {% endif %}
+                
+                <div class="mt-4">
+                    <h5>Performance Insights</h5>
+                    
+                    <div class="row mt-3">
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-body">
+                                    <h6>Strengths</h6>
+                                    <ul>
+                                        {% if weapon_analysis %}
+                                            {% with best_weapon=weapon_analysis.0 %}
+                                                <li>Your best performing weapon is the <strong>{{ best_weapon.weapon__name|slice:"7:" }}</strong> with an average of {{ best_weapon.avg_kills_when_active|floatformat:2 }} kills per active round.</li>
+                                            {% endwith %}
+                                            
+                                            {% with most_used=weapon_analysis|dictsort:"times_active"|last %}
+                                                <li>You are most comfortable with the <strong>{{ most_used.weapon__name|slice:"7:" }}</strong>, using it {{ most_used.times_active }} times.</li>
+                                            {% endwith %}
+                                            
+                                            {% if weapon_analysis|length > 2 %}
+                                                <li>You have good weapon diversity, using {{ weapon_analysis|length }} different weapons effectively.</li>
+                                            {% endif %}
+                                        {% else %}
+                                            <li>Play more matches to generate weapon performance insights.</li>
+                                        {% endif %}
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-body">
+                                    <h6>Areas for Improvement</h6>
+                                    <ul>
+                                        {% if weapon_analysis %}
+                                            {% with worst_weapon=weapon_analysis|dictsort:"avg_kills_when_active"|first %}
+                                                {% if worst_weapon.avg_kills_when_active < 0.3 and worst_weapon.times_active > 5 %}
+                                                    <li>Consider practicing with the <strong>{{ worst_weapon.weapon__name|slice:"7:" }}</strong> as it has lower effectiveness ({{ worst_weapon.avg_kills_when_active|floatformat:2 }} avg. kills).</li>
+                                                {% endif %}
+                                            {% endwith %}
+                                            
+                                            <li>Practice weapon variety across different economic situations to improve adaptability.</li>
+                                            
+                                            <li>Consider the economic efficiency of your weapon choices - higher cost doesn't always mean better performance.</li>
+                                        {% else %}
+                                            <li>Play more matches to generate weapon performance insights.</li>
+                                        {% endif %}
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

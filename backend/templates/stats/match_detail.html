@@ -1,0 +1,207 @@
+{% extends 'base.html' %}
+
+{% block title %}Match Details | CounterTrak{% endblock %}
+
+{% block extra_css %}
+<style>
+    .team-ct {
+        background-color: rgba(30, 144, 255, 0.1);
+        border-left: 4px solid rgba(30, 144, 255, 0.8);
+    }
+    
+    .team-t {
+        background-color: rgba(255, 165, 0, 0.1);
+        border-left: 4px solid rgba(255, 165, 0, 0.8);
+    }
+    
+    .round-win-ct {
+        background-color: rgba(30, 144, 255, 0.3);
+    }
+    
+    .round-win-t {
+        background-color: rgba(255, 165, 0, 0.3);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1 class="mb-4">Match Details</h1>
+    </div>
+</div>
+
+<!-- Match overview -->
+<div class="row">
+    <div class="col-md-6">
+        <div class="card stats-card mb-4">
+            <div class="card-header">
+                <h5>Match Overview</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <p><strong>Map:</strong> {{ match.map_name }}</p>
+                        <p><strong>Game Mode:</strong> {{ match.game_mode }}</p>
+                        <p><strong>Date:</strong> {{ match.start_timestamp|date:"F j, Y - g:i A" }}</p>
+                    </div>
+                    <div class="col-md-6">
+                        <p><strong>Rounds Played:</strong> {{ match.rounds_played }}</p>
+                        <p><strong>CT Score:</strong> {{ match.team_ct_score }}</p>
+                        <p><strong>T Score:</strong> {{ match.team_t_score }}</p>
+                    </div>
+                </div>
+                
+                <div class="text-center mt-3">
+                    <h4>Final Score</h4>
+                    <div class="d-flex justify-content-center align-items-center">
+                        <div class="p-3 bg-primary text-white rounded-start">
+                            <strong>CT</strong>
+                        </div>
+                        <div class="p-3 bg-white border-top border-bottom">
+                            <strong>{{ match.team_ct_score }} - {{ match.team_t_score }}</strong>
+                        </div>
+                        <div class="p-3 bg-warning text-white rounded-end">
+                            <strong>T</strong>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-6">
+        <div class="card stats-card mb-4">
+            <div class="card-header">
+                <h5>Round History</h5>
+            </div>
+            <div class="card-body">
+                <div class="d-flex flex-wrap justify-content-center gap-2 mb-3">
+                    {% for round in rounds %}
+                        <div class="rounded p-2 text-center {% if round.winning_team == 'CT' %}round-win-ct{% elif round.winning_team == 'T' %}round-win-t{% else %}bg-light{% endif %}" style="width: 40px; height: 40px;">
+                            {{ round.round_number }}
+                        </div>
+                    {% endfor %}
+                </div>
+                
+                <div class="mt-3">
+                    <div class="d-flex justify-content-center gap-3">
+                        <div>
+                            <span class="badge round-win-ct">CT Win</span>
+                        </div>
+                        <div>
+                            <span class="badge round-win-t">T Win</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Player stats -->
+<div class="row">
+    <div class="col-12">
+        <div class="card stats-card">
+            <div class="card-header">
+                <h5>Player Statistics</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-stats">
+                        <thead>
+                            <tr>
+                                <th>Player</th>
+                                <th>Team</th>
+                                <th>Kills</th>
+                                <th>Deaths</th>
+                                <th>Assists</th>
+                                <th>K/D Ratio</th>
+                                <th>MVPs</th>
+                                <th>Score</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for stat in player_stats %}
+                            <tr class="{% if stat.steam_account in ct_players %}team-ct{% elif stat.steam_account in t_players %}team-t{% endif %}">
+                                <td>{{ stat.steam_account.player_name }}</td>
+                                <td>
+                                    {% if stat.steam_account in ct_players %}
+                                        <span class="badge bg-primary">CT</span>
+                                    {% elif stat.steam_account in t_players %}
+                                        <span class="badge bg-warning text-dark">T</span>
+                                    {% else %}
+                                        <span class="badge bg-secondary">Unknown</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ stat.kills }}</td>
+                                <td>{{ stat.deaths }}</td>
+                                <td>{{ stat.assists }}</td>
+                                <td>
+                                    {% if stat.deaths > 0 %}
+                                        {{ stat.kills|floatformat:2|cut:'.00' }}
+                                    {% else %}
+                                        {{ stat.kills }}
+                                    {% endif %}
+                                </td>
+                                <td>{{ stat.mvps }}</td>
+                                <td>{{ stat.score }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if rounds %}
+<!-- Round details -->
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card stats-card">
+            <div class="card-header">
+                <h5>Round Details</h5>
+            </div>
+            <div class="card-body">
+                <div class="accordion" id="roundAccordion">
+                    {% for round in rounds %}
+                    <div class="accordion-item">
+                        <h2 class="accordion-header" id="round{{ round.round_number }}Heading">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#round{{ round.round_number }}Collapse">
+                                Round {{ round.round_number }} - 
+                                {% if round.winning_team == 'CT' %}
+                                    <span class="badge bg-primary ms-2">CT Win</span>
+                                {% elif round.winning_team == 'T' %}
+                                    <span class="badge bg-warning text-dark ms-2">T Win</span>
+                                {% else %}
+                                    <span class="badge bg-secondary ms-2">Unknown Outcome</span>
+                                {% endif %}
+                                
+                                {% if round.win_condition %}
+                                    <small class="ms-2">{{ round.win_condition }}</small>
+                                {% endif %}
+                            </button>
+                        </h2>
+                        <div id="round{{ round.round_number }}Collapse" class="accordion-collapse collapse" data-bs-parent="#roundAccordion">
+                            <div class="accordion-body">
+                                <p><strong>Phase:</strong> {{ round.phase }}</p>
+                                <p><strong>Timestamp:</strong> {{ round.timestamp|date:"F j, Y - g:i A" }}</p>
+                                
+                                {% if round.win_condition %}
+                                    <p><strong>Win Condition:</strong> {{ round.win_condition }}</p>
+                                {% endif %}
+                                
+                                <!-- We could include additional round-specific details here -->
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

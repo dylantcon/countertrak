@@ -1,0 +1,163 @@
+{% extends 'base.html' %}
+
+{% block title %}Statistics | CounterTrak{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1 class="mb-4">CounterTrak Statistics</h1>
+    </div>
+</div>
+
+<!-- System-wide statistics summary -->
+<div class="row">
+    <div class="col-md-3">
+        <div class="card stats-card mb-4">
+            <div class="card-body text-center">
+                <div class="stats-value">{{ total_matches }}</div>
+                <div class="stats-label">Total Matches</div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-3">
+        <div class="card stats-card mb-4">
+            <div class="card-body text-center">
+                <div class="stats-value">{{ total_players }}</div>
+                <div class="stats-label">Registered Players</div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-3">
+        <div class="card stats-card mb-4">
+            <div class="card-body text-center">
+                <div class="stats-value">{{ total_rounds }}</div>
+                <div class="stats-label">Total Rounds</div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-3">
+        <div class="card stats-card mb-4">
+            <div class="card-body text-center">
+                <div class="stats-value">{{ total_kills }}</div>
+                <div class="stats-label">Total Eliminations</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Popular maps -->
+    <div class="col-md-6">
+        <div class="card stats-card mb-4">
+            <div class="card-header">
+                <h5>Most Popular Maps</h5>
+            </div>
+            <div class="card-body">
+                {% if popular_maps %}
+                    <div class="table-responsive">
+                        <table class="table table-stats">
+                            <thead>
+                                <tr>
+                                    <th>Map</th>
+                                    <th>Matches Played</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for map in popular_maps %}
+                                <tr>
+                                    <td>{{ map.map_name }}</td>
+                                    <td>{{ map.count }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <p class="text-center">No map data available yet.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <!-- Popular weapons -->
+    <div class="col-md-6">
+        <div class="card stats-card mb-4">
+            <div class="card-header">
+                <h5>Most Used Weapons</h5>
+            </div>
+            <div class="card-body">
+                {% if popular_weapons %}
+                    <div class="table-responsive">
+                        <table class="table table-stats">
+                            <thead>
+                                <tr>
+                                    <th>Weapon</th>
+                                    <th>Times Used</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for weapon in popular_weapons %}
+                                <tr>
+                                    <td>{{ weapon.weapon__name|slice:"7:" }}</td>
+                                    <td>{{ weapon.count }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <p class="text-center">No weapon data available yet.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Recent matches -->
+<div class="row">
+    <div class="col-12">
+        <div class="card stats-card">
+            <div class="card-header">
+                <h5>Recent Matches</h5>
+            </div>
+            <div class="card-body">
+                {% if recent_matches %}
+                    <div class="table-responsive">
+                        <table class="table table-stats">
+                            <thead>
+                                <tr>
+                                    <th>Map</th>
+                                    <th>Mode</th>
+                                    <th>Score (CT-T)</th>
+                                    <th>Rounds</th>
+                                    <th>Date</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for match in recent_matches %}
+                                <tr>
+                                    <td>{{ match.map_name }}</td>
+                                    <td>{{ match.game_mode }}</td>
+                                    <td>{{ match.team_ct_score }}-{{ match.team_t_score }}</td>
+                                    <td>{{ match.rounds_played }}</td>
+                                    <td>{{ match.start_timestamp|date:"M d, Y" }}</td>
+                                    <td>
+                                        <a href="{% url 'match_detail' match.match_id %}" class="btn btn-sm btn-ct-primary">Details</a>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <p class="text-center">No matches have been played yet.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

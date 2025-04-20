@@ -81,6 +81,9 @@ class MatchProcessor:
         self.last_update_time = time.time()
         self.is_completed = False
 
+        # add a single persistence lock for database operations
+        self.persistence_lock = asyncio.Lock()
+
         logger.info(f"Match processor initialized for match {self.match_id} owned by {owner_steam_id}")
 
     async def handle_payload(self, payload: Dict, is_owner_playing: bool) -> None:
@@ -238,11 +241,11 @@ class MatchProcessor:
             winning_team: The winning team
             win_condition: How the round was won
         """
-        # Check if round exists
+        # check if round exists
         round_exists_in_db = await round_exists(self.match_id, round_number)
 
         if round_exists_in_db:
-            # Update existing round with winner info
+            # update existing round with winner info
             success = await update_round_winner(
                 self.match_id, round_number, winning_team, win_condition
             )
@@ -251,7 +254,7 @@ class MatchProcessor:
             else:
                 round_logger.warning(f"Match {self.match_id}: Failed to update round {round_number} winner in database")
         else:
-            # Create new round with winner info
+            # create new round with winner info
             round_id = await create_round(
                 self.match_id, round_number, "over", winning_team, win_condition,
                 self.match_state.timestamp if self.match_state else int(time.time())
@@ -352,15 +355,38 @@ class MatchProcessor:
                 logger.debug(f"{indent_str}{key}:")
                 self._debug_log_payload(value, indent_level + 2)
 
-    async def _handle_round_transition(self, old_round: int, new_round: int, new_round_state: RoundState) -> None:
+    async def _handle_round_transition(self, old_round: int, new_round: int, 
+                                       new_round_state: RoundState) -> None:
         """Handle transition between rounds"""
-        round_logger.info(f"Match {self.match_id}: Processing round transition from {old_round} to {new_round}")
+        round_logger.info(f"Match {self.match_id}: Processing round transition {old_round} to {new_round}")
 
         # 1. complete the old round if it exists and hasn't been persisted
-        if old_round > 0 and old_round not in self.rounds_persisted:
-            await self._complete_round(old_round)
+        if old_round > 0:
+            async with self.persistence_lock:
+                # check if round is already persisted while holding the lock
+                if old_round not in self.rounds_persisted:
+                    # mark it immediately to prevent race conditions with match completion
+                    self.rounds_persisted.add(old_round)
+                    should_complete = True
+                else:
+                    should_complete = False
 
-        # 2. initialize the new round if it's active
+            # now complete the round outside the lock if needed
+            if should_complete:
+                await self._complete_round(old_round)
+
+        # 2. check if match is already completed before initializing a new round
+        async with self.persistence_lock:
+            match_completed = self.is_completed
+
+        if match_completed:
+            round_logger.info(
+                f"Match {self.match_id} is already completed, " +
+                f"skipping initialization of round {new_round}"
+            )
+            return
+
+        # 3. initialize the new round if it's active
         if (new_round_state.phase in ['freezetime', 'live']) and new_round > 0:
             # check if this round has already been created
             round_existence = await round_exists(self.match_id, new_round)
@@ -375,54 +401,58 @@ class MatchProcessor:
 
     async def _complete_round(self, round_number: int) -> None:
         """Complete a round and persist all related data"""
-        # get round winner information from the extractor
-        winning_team = self.extractor.get_round_winner(round_number)
-        win_condition = self.extractor.get_round_win_condition(round_number)
+        try:
+            # get round winner information from the extractor
+            winning_team = self.extractor.get_round_winner(round_number)
+            win_condition = self.extractor.get_round_win_condition(round_number)
 
-        # first check if round exists
-        round_existence = await round_exists(self.match_id, round_number)
+            # first check if round exists
+            round_existence = await round_exists(self.match_id, round_number)
 
-        # update round with winner information if available
-        if winning_team:
-            if round_existence:
-                # update existing round with winner info
-                await update_round_winner(
-                    self.match_id, round_number, winning_team, win_condition
-                )
-                logger.info(f"Match {self.match_id}: Updated round {round_number} winner: {winning_team}")
-            else:
-                # create new round directly with winner info
-                await create_round(
-                    self.match_id, round_number, "over", winning_team, win_condition,
-                    self.match_state.timestamp if self.match_state else int(time.time())
-                )
-                logger.info(f"Match {self.match_id}: Created final round {round_number} record with winner: {winning_team}")
-                if not self.match_state:
-                    logger.warning(f"A timestamp was instantiated in {__name__}")
+            # update round with winner information if available
+            if winning_team:
+                if round_existence:
+                    # update existing round with winner info
+                    await update_round_winner(
+                        self.match_id, round_number, winning_team, win_condition
+                    )
+                    logger.info(f"Match {self.match_id}: Updated round {round_number} winner: {winning_team}")
+                else:
+                    # create new round directly with winner info
+                    await create_round(
+                        self.match_id, round_number, "over", winning_team, win_condition,
+                        self.match_state.timestamp if self.match_state else int(time.time())
+                    )
+                    logger.info(f"Match {self.match_id}: Created final round {round_number} record with winner: {winning_team}")
+                    if not self.match_state:
+                        logger.warning(f"A timestamp was instantiated in {__name__}")
 
-        # persist all player and weapon data for this round
-        await self._persist_round_data(round_number)
+            # persist all player and weapon data for this round
+            await self._persist_round_data(round_number)
 
-        logger.info(f"Match {self.match_id}: Completed round {round_number}")
+            logger.info(f"Match {self.match_id}: Completed round {round_number}")
+        except Exception as e:
+            # if something fails, we need to unmark the round so it can be tried again
+            async with self.persistence_lock:
+                if round_number in self.rounds_persisted:
+                    self.rounds_persisted.remove(round_number)
+            logger.error(f"Error completing round {round_number}: {str(e)}")
+            logger.exception(e)
 
     async def _persist_round_data(self, round_number: int) -> None:
-        """
-        Persist all data for a completed round.
-
-        This includes:
-        1. Round record
-        2. Player round states
-        3. Player weapons (now handled separately)
-        4. Updated match stats
-
-        Args:
-            round_number: The round number to persist
-        """
+        """Persist all data for a completed round."""
         if not self.match_state or not self.match_persisted:
             logger.warning(f"Cannot persist round data: match not yet persisted for round {round_number}")
             return
 
         try:
+            # double-check that this round is still marked for persistence
+            # this is a safety check; the lock should have been acquired earlier
+            async with self.persistence_lock:
+                if round_number not in self.rounds_persisted:
+                    logger.warning(f"Round {round_number} is not marked for persistence anymore, skipping")
+                    return
+
             # check if round already exists
             round_already_exists = await round_exists(self.match_id, round_number)
 
@@ -437,26 +467,22 @@ class MatchProcessor:
                 # only update winner info if round exists
                 await create_round(
                     self.match_id, round_number,
-                    self.round_state.phase if self.round_state else "over", 
+                    self.round_state.phase if self.round_state else "over",
                     winning_team, win_condition
                 )
                 logger.info(f"Created round record for match {self.match_id}, round {round_number}")
 
-            # now, with list comprehension completed, persist playerstates
+            # persist player states
             await batch_create_player_states(
                 self.match_id, round_number, self.player_states_history
             )
 
-            # get full length of weapon state history
+            # get full length of weapon state history and persist weapon states
             total_ws = sum(len(d) for d in self.weapon_states_history)
-
-            # log history of weapon state data
-            logger.info(f"Persisting {total_ws} weapon states for round {round_number}")           
-
-            # call batch weaponstate creation method
+            logger.info(f"Persisting {total_ws} weapon states for round {round_number}")
             await batch_create_player_weapons(
-                self.match_id, 
-                round_number, 
+                self.match_id,
+                round_number,
                 self.owner_steam_id,
                 self.weapon_states_history
             )
@@ -464,31 +490,35 @@ class MatchProcessor:
             # update match stats
             if self.player_states_history:
                 await update_player_match_stats(
-                    self.match_id, 
+                    self.match_id,
                     self.player_states_history[-1]
                 )
 
-            # clear history for next round
+            # critical: clear history for next round - this is what prevents duplicate persistence
             self.player_states_history = []
             self.weapon_states_history = []
 
-            # mark round as persisted
-            self.rounds_persisted.add(round_number)
-
         except Exception as e:
+            # if something fails during persistence, we should unmark the round
+            async with self.persistence_lock:
+                if round_number in self.rounds_persisted:
+                    self.rounds_persisted.remove(round_number)
             logger.error(f"Error persisting round data: {str(e)}")
             logger.exception(e)
 
     async def _handle_match_completion(self) -> None:
         """
         Handle the completion of a match.
-        
+
         Finalizes all data and marks the match as completed.
         """
-        if self.is_completed:
-            return
-            
-        self.is_completed = True
+        # prevent duplicate completion processing with lock
+        async with self.persistence_lock:
+            if self.is_completed:
+                return
+            # mark as completed immediately while holding the lock
+            self.is_completed = True
+
         logger.info(f"Match {self.match_id} completed")
 
         try:
@@ -502,17 +532,27 @@ class MatchProcessor:
                 f"Total rounds: {total_rounds}"
             )
 
-            # ensure all rounds are persisted
+            # process any rounds that haven't been persisted yet
             for round_num in range(1, self.current_round + 1):
-                if round_num not in self.rounds_persisted:
+                async with self.persistence_lock:
+                    # check if this round needs persistence while holding the lock
+                    if round_num not in self.rounds_persisted:
+                        # mark it as in progress immediately to prevent race conditions
+                        self.rounds_persisted.add(round_num)
+                        should_process = True
+                    else:
+                        should_process = False
+
+                # now do the actual persistence outside the lock if needed
+                if should_process:
                     logger.info(f"Processing missed round {round_num} during match completion")
                     await self._persist_round_data(round_num)
 
-            # mark match as completed
+            # mark match as completed in database
             success = await complete_match(
                 self.match_id, ct_score, t_score, total_rounds, self.match_state.timestamp
             )
-            
+
             if success:
                 logger.info(f"Successfully completed match {self.match_id}")
             else:

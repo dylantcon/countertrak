@@ -17,6 +17,7 @@ from gsi.payloadextractor import MatchState, PlayerState, WeaponState, RoundStat
 from gsi.logging_service import get_colored_logger
 
 logger = get_colored_logger('DJANGO_INTEGRATION', 'light_yellow')
+conf_logger = get_colored_logger('DJANGO_INTEGRATION_BATCH', 'cyan')
 
 def convert_unix_timestamp_to_datetime(unix_timestamp: int) -> datetime:
     """
@@ -533,7 +534,7 @@ async def batch_create_player_states(match_id: str, round_number: int,
             if player_round_state_id:
                 count += 1
 
-        logger.info(f"Batch created {count} player states for match {match_id}, round {round_number}")
+        conf_logger.info(f"Batch created {count} player states for match {match_id}, round {round_number}")
         return count
     except Exception as e:
         logger.error(f"Error batch creating player states: {str(e)}")
@@ -547,7 +548,7 @@ def _player_round_state_exists_sync(match_id: str, round_number: int,
 
     Check to see if a given PlayerRoundState exists in the database records.
     """
-    # Key (match_id, round_number, steam_account_id, state_timestamp)=(de_mirage_casual_76561198277157609_9a81c0b0-2e6e-4ae2-b3a3-efb89acf676d, 1, 76561198277157609, 2025-04-20 08:49:59+00) already exists.
+    # key (match_id, round_number, steam_account_id, state_timestamp)=(de_mirage_casual_76561198277157609_9a81c0b0-2e6e-4ae2-b3a3-efb89acf676d, 1, 76561198277157609, 2025-04-20 08:49:59+00) already exists.
     try:
         state_time = convert_unix_timestamp_to_datetime(player_state.state_timestamp) 
         with connection.cursor() as cursor:
@@ -608,7 +609,7 @@ def _create_player_weapon_states_sync(match_id: str, round_number: int,
             # process each weapon
             for slot, weapon_state in weapons.items():
                 try:
-                    # get weapon ID from name
+                    # get weapon id from name
                     cursor.execute(
                         "SELECT weapon_id FROM stats_weapon WHERE name = %s",
                         [weapon_state.name]
@@ -667,36 +668,122 @@ async def create_player_weapon_states(match_id: str, round_number: str,
     """
     return await _create_player_weapon_states_sync(match_id, round_number, steam_id, weapons)
 
-async def batch_create_player_weapons(match_id: str, round_number: int,
-                                    steam_id: str, weapon_states: Dict[str, WeaponState]) -> int:
+async def batch_create_player_weapons(match_id: str, round_number: int, steam_id: str,
+                                      weapon_states_history: List[Dict[str, WeaponState]]) -> int:
     """
-    Create weapon records directly using the compound key approach.
-
-    Args:
-        match_id: The match ID
-        round_number: The round number
-        steam_id: The steam ID of the weapon owner
-        weapon_states: Dictionary of weapon states keyed by slot
-
-    Returns:
-        Number of weapon records created
+    Create weapon records from a list of weapon state dictionaries.
     """
     try:
-        if not weapon_states:
-            logger.warning(f"No weapon states to persist for player {steam_id}")
+        if not weapon_states_history:
+            logger.warning(f"No weapon states history to persist for player {steam_id} in match {match_id}, round {round_number}")
             return 0
 
-        # persist weapons directly
-        weapon_count = await create_player_weapon_states(
-            match_id, round_number, steam_id, weapon_states
-        )
+        total_count = 0
 
-        logger.info(f"Created {weapon_count} weapon states for match {match_id}, round {round_number}, player {steam_id}")
-        return weapon_count
+        # Process each dictionary (snapshot) in the history list
+        for weapon_states_dict in weapon_states_history:
+            if not weapon_states_dict:
+                continue
+                
+            weapons_to_create = {}
+            
+            # Check each weapon in the dictionary
+            for slot, weapon_state in weapon_states_dict.items():
+                # Get weapon ID from name - using our async helper
+                weapon_id = await get_weapon_id_by_name(weapon_state.name)
+                
+                if not weapon_id:
+                    logger.warning(f"Unknown weapon: {weapon_state.name}")
+                    continue
+                    
+                # Check if this weapon record already exists
+                seen = await player_weapon_exists(
+                    match_id, round_number, steam_id, weapon_id, weapon_state.state_timestamp
+                )
+                
+                if seen:
+                    logger.debug(f"Skipping duplicate weapon record for {weapon_state.name}")
+                    continue
+                    
+                # Add to weapons to create
+                weapons_to_create[slot] = weapon_state
+            
+            # Create only weapons that don't exist yet
+            if weapons_to_create:
+                weapon_count = await create_player_weapon_states(
+                    match_id, round_number, steam_id, weapons_to_create
+                )
+                total_count += weapon_count
+
+        conf_logger.info(f"Created {total_count} weapon states for player {steam_id} in match {match_id}, round {round_number}")
+        return total_count
 
     except Exception as e:
-        logger.error(f"Error creating weapon states: {str(e)}")
+        logger.error(f"Error creating weapon states history: {str(e)}")
         return 0
+
+@sync_to_async
+def _player_weapon_exists_sync(match_id: str, round_number: int, 
+                              steam_id: str, weapon_id: int, 
+                              state_timestamp: int) -> bool:
+    """
+    Synchronous implementation. 
+    Check if a PlayerWeapon record already exists in the database.
+    """
+    try:
+        state_time = convert_unix_timestamp_to_datetime(state_timestamp) 
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT COUNT(*) FROM stats_playerweapon
+                WHERE
+                    match_id = %s AND
+                    round_number = %s AND
+                    steam_account_id = %s AND
+                    weapon_id = %s AND
+                    state_timestamp = %s
+                """,
+                [
+                    match_id,
+                    round_number,
+                    steam_id,
+                    weapon_id,
+                    state_time
+                ]
+            )
+            return cursor.fetchone()[0] > 0
+    except Exception as e:
+        logger.error(f"Error checking weapon record existence: {str(e)}")
+        return False
+
+async def player_weapon_exists(match_id: str, round_number: int,
+                              steam_id: str, weapon_id: int,
+                              state_timestamp: int) -> bool:
+    """
+    Check if a PlayerWeapon record already exists in the database.
+    """
+    return await _player_weapon_exists_sync(
+        match_id, round_number, steam_id, weapon_id, state_timestamp
+    )
+
+@sync_to_async
+def _get_weapon_id_by_name_sync(weapon_name: str) -> Optional[int]:
+    """Synchronous implementation to get weapon ID by name"""
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT weapon_id FROM stats_weapon WHERE name = %s",
+                [weapon_name]
+            )
+            result = cursor.fetchone()
+            return result[0] if result else None
+    except Exception as e:
+        logger.error(f"Error getting weapon ID for {weapon_name}: {str(e)}")
+        return None
+
+async def get_weapon_id_by_name(weapon_name: str) -> Optional[int]:
+    """Get weapon ID by name asynchronously"""
+    return await _get_weapon_id_by_name_sync(weapon_name)
 
 #==============================================================================
 # player match statistics operations

@@ -33,6 +33,7 @@ from gsi.payloadextractor import (
 )
 
 round_logger = get_colored_logger('match_processor_rounds', 'light_green')
+event_logger = get_colored_logger('match_processor_events', 'light_blue')
 
 class MatchProcessor:
     """
@@ -62,9 +63,9 @@ class MatchProcessor:
         # metadata fields
         self.match_state: Optional[MatchState] = None
         self.round_state: Optional[RoundState] = None
-        self.player_states_history: List[PlayerState]
+        self.player_states_history: List[PlayerState] = []
         self.player_states: Dict[str, PlayerState] = {}
-        self.weapon_states_history: List[Dict[str, WeaponState]]
+        self.weapon_states_history: List[Dict[str, WeaponState]] = []
         self.weapon_states: Dict[str, WeaponState] = {}
         
         # persistence tracking
@@ -94,6 +95,9 @@ class MatchProcessor:
 
             # extract all data
             processed_data = self.extractor.process_payload(payload)
+
+            # trivially log events before real processing occurs
+            self._process_game_events(processed_data['changes'])
             
             # process entities in order of dependency
             await self._handle_match_data(processed_data)
@@ -103,7 +107,6 @@ class MatchProcessor:
             if is_owner_playing:
                 await self._handle_player_data(processed_data)
                 await self._handle_weapon_data(processed_data)
-                self._process_game_events(processed_data['changes'])
             
         except Exception as e:
             logger.error(f"Error handling payload in match {self.match_id}: {str(e)}")
@@ -270,13 +273,17 @@ class MatchProcessor:
                 player_id = event.get('player_id')
                 weapon = event.get('weapon')
                 kill_count = event.get('kill_count', 1)
-                logger.info(f"Player {player_id} got {kill_count} kill(s) with {weapon}")
+                event_logger.info(
+                    f"Player {player_id} got {kill_count} kill(s) with {weapon}"
+                )
 
             elif event_type == 'round_over':
                 round_number = event.get('round_number')
                 winner = event.get('winner')
                 condition = event.get('condition')
-                logger.info(f"Round {round_number} over. Winner: {winner}, Condition: {condition}")
+                event_logger.info(
+                    f"Round {round_number - 1} over. Winner: {winner}, Condition: {condition}"
+                )
 
     async def ensure_match(self, match_state: MatchState) -> bool:
         """Ensure match exists, creating it if necessary"""
@@ -448,10 +455,18 @@ class MatchProcessor:
 
             # call batch weaponstate creation method
             await batch_create_player_weapons(
+                self.match_id, 
+                round_number, 
+                self.owner_steam_id,
+                self.weapon_states_history
+            )
 
             # update match stats
             if self.player_states_history:
-                await update_player_match_stats(self.match_id, self.player_states_history[-1])
+                await update_player_match_stats(
+                    self.match_id, 
+                    self.player_states_history[-1]
+                )
 
             # clear history for next round
             self.player_states_history = []
@@ -540,8 +555,8 @@ class MatchProcessor:
     def _add_weapon_states(self, weapon_states: Dict[str, WeaponState]) -> None:
         """Add weapon states to history and update current states"""
         # add the dictionary to the history (list of dicts)
-        self.weapon_states_history.append(weapon_state)
-        self.weapon_states = weapon_state
+        self.weapon_states_history.append(weapon_states)
+        self.weapon_states = weapon_states
         
         # log for debugging (get total cumulative length
         total_states = sum(len(d) for d in self.weapon_states_history)

@@ -95,7 +95,7 @@ class GSIServer:
             
             # process the payload through the match manager
             process_start = time.time()
-            await self.match_manager.process_payload(payload)
+            await self.match_manager.route_payload(payload)
             
             # log http access info
             logger.info(f"{client_ip} - POST / HTTP/1.1 200 OK")

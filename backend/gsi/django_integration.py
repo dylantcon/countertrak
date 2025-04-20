@@ -14,7 +14,7 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'countertrak.settings')
 django.setup()
 
 # import data classes for type annotations
-from gsi.payloadextractor import MatchState, PlayerState, WeaponState
+from gsi.payloadextractor import MatchState, PlayerState, WeaponState, RoundState
 
 logger = logging.getLogger('django_integration')
 
@@ -690,6 +690,7 @@ def _update_player_match_stats_sync(match_id: str, player_state: PlayerState) ->
                     player_state.match_score
                 ]
             )
+            logger.debug(f"Updated match stats for player {player_state.steam_id} in match {match_id}")
             return True
     except Exception as e:
         logger.error(f"Error updating player match stats: {str(e)}")
@@ -709,29 +710,3 @@ async def update_player_match_stats(match_id: str, player_state: PlayerState) ->
         True if update was successful, False otherwise
     """
     return await _update_player_match_stats_sync(match_id, player_state)
-
-async def batch_update_player_match_stats(match_id: str, 
-                                       player_states: Dict[str, PlayerState]) -> int:
-    """
-    Update multiple players' match statistics.
-    
-    Args:
-        match_id: The match ID
-        player_states: Dictionary of player states containing match statistics
-        
-    Returns:
-        Number of player records updated
-    """
-    try:
-        count = 0
-        
-        for steam_id, player_state in player_states.items():
-            success = await update_player_match_stats(match_id, player_state)
-            if success:
-                count += 1
-        
-        logger.info(f"Batch updated {count} player match stats for match {match_id}")
-        return count
-    except Exception as e:
-        logger.error(f"Error batch updating player match stats: {str(e)}")
-        return 0

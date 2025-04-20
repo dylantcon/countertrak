@@ -41,7 +41,7 @@ class MatchManager:
 
         logger.info("Match Manager initialized")
 
-    async def process_payload(self, payload: Dict) -> bool:
+    async def route_payload(self, payload: Dict) -> bool:
         """
         Process a GSI payload by routing it to the appropriate match processor.
         
@@ -92,7 +92,7 @@ class MatchManager:
                 return False
 
             # process the payload
-            await processor.process_payload(payload, is_owner_playing)
+            await processor.handle_payload(payload, is_owner_playing)
 
             # cleanup completed matches periodically
             await self._cleanup_completed_matches()

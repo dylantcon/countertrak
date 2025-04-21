@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% load stats_extras %}
 
 {% block title %}Weapon Analysis | CounterTrak{% endblock %}
 
@@ -142,51 +143,125 @@
                                     </tr>
                                 </thead>
                                 <tbody>
+                                    {% with low_equip_data=economic_data|dictsort:"equip_value"|slice:":5" %}
                                     <tr>
                                         <td>Low (&lt;$2000)</td>
-                                        <td>{{ economic_data|dictsortbykey:"equip_value"|slice:":5"|dictsort:"kills"|last.kills|floatformat:1 }}</td>
                                         <td>
-                                            {% with eco_eff=economic_data|dictsortbykey:"equip_value"|slice:":5"|dictsort:"kills"|last.kills|floatformat:1 %}
-                                                {% if eco_eff > 1 %}
-                                                    <span class="badge bg-success">High</span>
-                                                {% elif eco_eff > 0.5 %}
-                                                    <span class="badge bg-primary">Medium</span>
-                                                {% else %}
-                                                    <span class="badge bg-danger">Low</span>
-                                                {% endif %}
-                                            {% endwith %}
+                                            {% if low_equip_data %}
+                                                {% with sorted_data=low_equip_data|dictsort:"kills" %}
+                                                    {% if sorted_data %}
+                                                        {{ sorted_data|last|get_item:"kills"|floatformat:1 }}
+                                                    {% else %}
+                                                        0.0
+                                                    {% endif %}
+                                                {% endwith %}
+                                            {% else %}
+                                                0.0
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            {% if low_equip_data %}
+                                                {% with sorted_data=low_equip_data|dictsort:"kills" %}
+                                                    {% if sorted_data %}
+                                                        {% with efficiency=sorted_data|last|get_item:"kills" %}
+                                                            {% if efficiency > 1 %}
+                                                                <span class="badge bg-success">High</span>
+                                                            {% elif efficiency > 0.5 %}
+                                                                <span class="badge bg-primary">Medium</span>
+                                                            {% else %}
+                                                                <span class="badge bg-danger">Low</span>
+                                                            {% endif %}
+                                                        {% endwith %}
+                                                    {% else %}
+                                                        <span class="badge bg-danger">Low</span>
+                                                    {% endif %}
+                                                {% endwith %}
+                                            {% else %}
+                                                <span class="badge bg-danger">Low</span>
+                                            {% endif %}
                                         </td>
                                     </tr>
+                                    {% endwith %}
+                                    
+                                    {% with med_equip_data=economic_data|dictsort:"equip_value"|slice:"5:15" %}
                                     <tr>
                                         <td>Medium ($2000-$4000)</td>
-                                        <td>{{ economic_data|dictsortbykey:"equip_value"|slice:"5:15"|dictsort:"kills"|last.kills|floatformat:1 }}</td>
                                         <td>
-                                            {% with med_eff=economic_data|dictsortbykey:"equip_value"|slice:"5:15"|dictsort:"kills"|last.kills|floatformat:1 %}
-                                                {% if med_eff > 1 %}
-                                                    <span class="badge bg-success">High</span>
-                                                {% elif med_eff > 0.5 %}
-                                                    <span class="badge bg-primary">Medium</span>
-                                                {% else %}
-                                                    <span class="badge bg-danger">Low</span>
-                                                {% endif %}
-                                            {% endwith %}
+                                            {% if med_equip_data %}
+                                                {% with sorted_data=med_equip_data|dictsort:"kills" %}
+                                                    {% if sorted_data %}
+                                                        {{ sorted_data|last|get_item:"kills"|floatformat:1 }}
+                                                    {% else %}
+                                                        0.0
+                                                    {% endif %}
+                                                {% endwith %}
+                                            {% else %}
+                                                0.0
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            {% if med_equip_data %}
+                                                {% with sorted_data=med_equip_data|dictsort:"kills" %}
+                                                    {% if sorted_data %}
+                                                        {% with efficiency=sorted_data|last|get_item:"kills" %}
+                                                            {% if efficiency > 1 %}
+                                                                <span class="badge bg-success">High</span>
+                                                            {% elif efficiency > 0.5 %}
+                                                                <span class="badge bg-primary">Medium</span>
+                                                            {% else %}
+                                                                <span class="badge bg-danger">Low</span>
+                                                            {% endif %}
+                                                        {% endwith %}
+                                                    {% else %}
+                                                        <span class="badge bg-danger">Low</span>
+                                                    {% endif %}
+                                                {% endwith %}
+                                            {% else %}
+                                                <span class="badge bg-danger">Low</span>
+                                            {% endif %}
                                         </td>
                                     </tr>
+                                    {% endwith %}
+                                    
+                                    {% with high_equip_data=economic_data|dictsort:"equip_value"|slice:"15:" %}
                                     <tr>
                                         <td>High (&gt;$4000)</td>
-                                        <td>{{ economic_data|dictsortbykey:"equip_value"|slice:"15:"|dictsort:"kills"|last.kills|floatformat:1 }}</td>
                                         <td>
-                                            {% with high_eff=economic_data|dictsortbykey:"equip_value"|slice:"15:"|dictsort:"kills"|last.kills|floatformat:1 %}
-                                                {% if high_eff > 1 %}
-                                                    <span class="badge bg-success">High</span>
-                                                {% elif high_eff > 0.5 %}
-                                                    <span class="badge bg-primary">Medium</span>
-                                                {% else %}
-                                                    <span class="badge bg-danger">Low</span>
-                                                {% endif %}
-                                            {% endwith %}
+                                            {% if high_equip_data %}
+                                                {% with sorted_data=high_equip_data|dictsort:"kills" %}
+                                                    {% if sorted_data %}
+                                                        {{ sorted_data|last|get_item:"kills"|floatformat:1 }}
+                                                    {% else %}
+                                                        0.0
+                                                    {% endif %}
+                                                {% endwith %}
+                                            {% else %}
+                                                0.0
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            {% if high_equip_data %}
+                                                {% with sorted_data=high_equip_data|dictsort:"kills" %}
+                                                    {% if sorted_data %}
+                                                        {% with efficiency=sorted_data|last|get_item:"kills" %}
+                                                            {% if efficiency > 1 %}
+                                                                <span class="badge bg-success">High</span>
+                                                            {% elif efficiency > 0.5 %}
+                                                                <span class="badge bg-primary">Medium</span>
+                                                            {% else %}
+                                                                <span class="badge bg-danger">Low</span>
+                                                            {% endif %}
+                                                        {% endwith %}
+                                                    {% else %}
+                                                        <span class="badge bg-danger">Low</span>
+                                                    {% endif %}
+                                                {% endwith %}
+                                            {% else %}
+                                                <span class="badge bg-danger">Low</span>
+                                            {% endif %}
                                         </td>
                                     </tr>
+                                    {% endwith %}
                                 </tbody>
                             </table>
                         </div>

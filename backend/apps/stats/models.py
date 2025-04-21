@@ -11,6 +11,7 @@ class PlayerRoundState(models.Model):
     money = models.IntegerField()
     equip_value = models.IntegerField()
     round_kills = models.IntegerField(default=0)
+    team = models.CharField(max_length=32, default='SPEC')  # Added team field with default
     state_timestamp = models.DateTimeField(auto_now_add=True)
     
     class Meta:

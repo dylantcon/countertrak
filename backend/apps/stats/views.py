@@ -1,6 +1,7 @@
 from django.shortcuts import render, get_object_or_404
 from django.contrib.auth.decorators import login_required
-from django.db.models import Avg, Count, Sum, F, Q
+from django.db.models import Avg, Count, Sum, F, Q, Case, When, Value, FloatField, IntegerField
+from django.db import models
 from .models import PlayerMatchStat, PlayerRoundState, PlayerWeapon, Weapon
 from apps.accounts.models import SteamAccount
 from apps.matches.models import Match, Round
@@ -18,9 +19,6 @@ def player_stats(request, steam_id=None):
     # Get the requested steam account
     steam_account = get_object_or_404(SteamAccount, steam_id=steam_id)
     
-    # If this is not the user's account and not a public profile, deny access
-    # (For now, all accounts are accessible)
-    
     # Get basic stats
     match_stats = PlayerMatchStat.objects.filter(steam_account=steam_account)
     total_matches = match_stats.count()
@@ -35,16 +33,28 @@ def player_stats(request, steam_id=None):
     # Get recent matches
     recent_matches = match_stats.order_by('-match__start_timestamp')[:5]
     
-    # Get weapon effectiveness (Using performance pattern recognition)
+    # Get weapon effectiveness
+    # First get all player round states for this player
+    player_rounds = PlayerRoundState.objects.filter(steam_account=steam_account)
+    
+    # Then get weapon stats based on those rounds
     weapon_stats = PlayerWeapon.objects.filter(
-        player_round_state__steam_account=steam_account,
+        steam_account=steam_account,
         state='active'
     ).values(
         'weapon__name', 'weapon__type'
     ).annotate(
-        times_used=Count('weapon'),
-        total_kills=Sum('player_round_state__round_kills'),
-        avg_kills=Avg('player_round_state__round_kills')
+        times_used=Count('id'),
+        total_kills=Sum('match__playerroundstate__round_kills', 
+                        filter=Q(
+                            match__playerroundstate__steam_account=steam_account,
+                            round_number=F('round_number')
+                        )),
+        avg_kills=Avg('match__playerroundstate__round_kills',
+                      filter=Q(
+                            match__playerroundstate__steam_account=steam_account,
+                            round_number=F('round_number')
+                        ))
     ).order_by('-avg_kills')
     
     context = {
@@ -72,9 +82,29 @@ def match_detail(request, match_id):
     # Get round data
     rounds = Round.objects.filter(match=match).order_by('round_number')
     
-    # Get team compositions and scores
-    ct_players = player_stats.filter(steam_account__playerroundstate__team='CT').distinct()
-    t_players = player_stats.filter(steam_account__playerroundstate__team='T').distinct()
+    # Get team compositions - handle cases where team attribute might not exist
+    ct_players = set()
+    t_players = set()
+    
+    for player in player_stats:
+        # Get the player's team from their most recent round state
+        latest_state = PlayerRoundState.objects.filter(
+            match=match,
+            steam_account=player.steam_account
+        ).order_by('-round_number').first()
+        
+        if latest_state:
+            # Handle cases where the team attribute might not exist
+            try:
+                team = latest_state.team
+                if team == 'CT':
+                    ct_players.add(player.steam_account)
+                elif team == 'T':
+                    t_players.add(player.steam_account)
+            except AttributeError:
+                # If team attribute doesn't exist, use default logic
+                # We can guess based on other factors or just not assign team
+                pass
     
     context = {
         'match': match,
@@ -99,22 +129,26 @@ def weapon_analysis(request, steam_id=None):
     # Get the requested steam account
     steam_account = get_object_or_404(SteamAccount, steam_id=steam_id)
     
-    # Advanced weapon effectiveness analysis
-    # This goes beyond simple K/D by analyzing contextual weapon effectiveness
+    # Simplified query - avoid using Case/When for now
     weapon_analysis = PlayerWeapon.objects.filter(
-        player_round_state__steam_account=steam_account
+        steam_account=steam_account,
+        state='active'  # Only look at active weapons
     ).values(
-        'weapon__name', 'weapon__type'
+        'weapon__name', 'weapon__type', 'weapon_id'
     ).annotate(
-        times_active=Count('weapon', filter=Q(state='active')),
-        times_holstered=Count('weapon', filter=Q(state='holstered')),
-        rounds_used=Count('player_round_state', distinct=True),
-        total_kills=Sum('player_round_state__round_kills', filter=Q(state='active')),
-        avg_kills_when_active=Avg('player_round_state__round_kills', filter=Q(state='active')),
-        avg_money=Avg('player_round_state__money'),
-    ).filter(
-        times_active__gt=0
-    ).order_by('-avg_kills_when_active')
+        times_active=Count('id'),
+        rounds_used=Count('match', distinct=True),
+        total_kills=Sum('match__playerroundstate__round_kills', 
+                         filter=Q(match__playerroundstate__steam_account=steam_account)),
+        avg_kills_when_active=Avg('match__playerroundstate__round_kills',
+                                   filter=Q(match__playerroundstate__steam_account=steam_account)),
+        avg_money=Avg('match__playerroundstate__money',
+                       filter=Q(match__playerroundstate__steam_account=steam_account))
+    ).order_by('-times_active')
+    
+    print(f"Weapon analysis data count: {len(weapon_analysis)}")
+    for weapon in weapon_analysis:
+        print(f"Weapon: {weapon['weapon__name']}, Kills: {weapon.get('total_kills', 0)}, Times active: {weapon['times_active']}")
     
     # Economic analysis - how does the player's spending correlate with performance?
     economic_data = PlayerRoundState.objects.filter(
@@ -122,8 +156,10 @@ def weapon_analysis(request, steam_id=None):
     ).values(
         'round_number', 'money', 'equip_value'
     ).annotate(
-        kills=Sum('round_kills')
+        kills=Sum('round_kills')  # Use Sum instead of Count for round_kills
     ).order_by('match', 'round_number')
+    
+    print(f"Economic data count: {len(economic_data)}")
     
     context = {
         'steam_account': steam_account,

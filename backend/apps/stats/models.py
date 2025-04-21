@@ -11,6 +11,7 @@ class PlayerRoundState(models.Model):
     money = models.IntegerField()
     equip_value = models.IntegerField()
     round_kills = models.IntegerField(default=0)
+    team = models.CharField(max_length=32, default='SPEC')
     state_timestamp = models.DateTimeField(auto_now_add=True)
     
     class Meta:
@@ -32,9 +33,9 @@ class Weapon(models.Model):
 
 class PlayerWeapon(models.Model):
     # compound key components
-    match = models.ForeignKey('matches.Match', on_delete=models.CASCADE)
+    match = models.ForeignKey('matches.Match', null=True, blank=True, on_delete=models.CASCADE)
     round_number = models.IntegerField()
-    steam_account = models.ForeignKey('accounts.SteamAccount', on_delete=models.CASCADE)
+    steam_account = models.ForeignKey('accounts.SteamAccount', null=True, blank=True, on_delete=models.CASCADE)
     weapon = models.ForeignKey(Weapon, on_delete=models.PROTECT)
 
     # state fields

@@ -458,15 +458,15 @@ def _create_player_round_state_sync(match_id: str, round_number: int,
                 """
                 INSERT INTO stats_playerroundstate
                 (match_id, round_number, steam_account_id, health, armor,
-                 money, equip_value, round_kills, state_timestamp)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 money, equip_value, round_kills, team, state_timestamp)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 [
                     match_id, round_number, player_state.steam_id,
                     player_state.health, player_state.armor, player_state.money,
                     player_state.equip_value, player_state.round_kills,
-                    state_time
+                    player_state.team, state_time
                 ]
             )
             player_round_state_id = cursor.fetchone()[0]

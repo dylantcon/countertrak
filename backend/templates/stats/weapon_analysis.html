@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% load stats_extras %}
 
 {% block title %}Weapon Analysis | CounterTrak{% endblock %}
 
@@ -81,37 +82,35 @@
                 {% if weapon_analysis and weapon_analysis|length > 0 %}
                     <div class="row">
                         {% for weapon in weapon_analysis %}
-                            {% if weapon.total_kills > 0 %}
-                                <div class="col-md-6 mb-3">
-                                    <div class="card performance-card 
-                                        {% if weapon.avg_kills_when_active > 1 %}
-                                            effectiveness-high
-                                        {% elif weapon.avg_kills_when_active > 0.5 %}
-                                            effectiveness-medium
-                                        {% else %}
-                                            effectiveness-low
-                                        {% endif %}
-                                    ">
-                                        <div class="card-body">
-                                            <h6>{{ weapon.weapon__name|slice:"7:" }}</h6>
-                                            <p class="mb-1"><strong>Avg. Kills:</strong> {{ weapon.avg_kills_when_active|floatformat:2 }}</p>
-                                            <p class="mb-1"><strong>Times Used:</strong> {{ weapon.times_active }}</p>
-                                            <p class="mb-0">
-                                                <strong>Effectiveness:</strong>
-                                                {% if weapon.avg_kills_when_active > 1 %}
-                                                    <span class="badge bg-success">Excellent</span>
-                                                {% elif weapon.avg_kills_when_active > 0.5 %}
-                                                    <span class="badge bg-primary">Good</span>
-                                                {% elif weapon.avg_kills_when_active > 0.25 %}
-                                                    <span class="badge bg-warning text-dark">Average</span>
-                                                {% else %}
-                                                    <span class="badge bg-danger">Poor</span>
-                                                {% endif %}
-                                            </p>
-                                        </div>
+                            <div class="col-md-6 mb-3">
+                                <div class="card performance-card 
+                                    {% if weapon.avg_kills_when_active > 1 %}
+                                        effectiveness-high
+                                    {% elif weapon.avg_kills_when_active > 0.5 %}
+                                        effectiveness-medium
+                                    {% else %}
+                                        effectiveness-low
+                                    {% endif %}
+                                ">
+                                    <div class="card-body">
+                                        <h6>{{ weapon.weapon__name|slice:"7:" }}</h6>
+                                        <p class="mb-1"><strong>Avg. Kills:</strong> {{ weapon.avg_kills_when_active|floatformat:2|default:"0.00" }}</p>
+                                        <p class="mb-1"><strong>Times Used:</strong> {{ weapon.times_active }}</p>
+                                        <p class="mb-0">
+                                            <strong>Effectiveness:</strong>
+                                            {% if weapon.avg_kills_when_active > 1 %}
+                                                <span class="badge bg-success">Excellent</span>
+                                            {% elif weapon.avg_kills_when_active > 0.5 %}
+                                                <span class="badge bg-primary">Good</span>
+                                            {% elif weapon.avg_kills_when_active > 0.25 %}
+                                                <span class="badge bg-warning text-dark">Average</span>
+                                            {% else %}
+                                                <span class="badge bg-danger">Poor</span>
+                                            {% endif %}
+                                        </p>
                                     </div>
                                 </div>
-                            {% endif %}
+                            </div>
                         {% endfor %}
                     </div>
                 {% else %}
@@ -142,51 +141,125 @@
                                     </tr>
                                 </thead>
                                 <tbody>
+                                    {% with low_equip_data=economic_data|dictsort:"equip_value"|slice:":5" %}
                                     <tr>
                                         <td>Low (&lt;$2000)</td>
-                                        <td>{{ economic_data|dictsortbykey:"equip_value"|slice:":5"|dictsort:"kills"|last.kills|floatformat:1 }}</td>
                                         <td>
-                                            {% with eco_eff=economic_data|dictsortbykey:"equip_value"|slice:":5"|dictsort:"kills"|last.kills|floatformat:1 %}
-                                                {% if eco_eff > 1 %}
-                                                    <span class="badge bg-success">High</span>
-                                                {% elif eco_eff > 0.5 %}
-                                                    <span class="badge bg-primary">Medium</span>
-                                                {% else %}
-                                                    <span class="badge bg-danger">Low</span>
-                                                {% endif %}
-                                            {% endwith %}
+                                            {% if low_equip_data %}
+                                                {% with sorted_data=low_equip_data|dictsort:"kills" %}
+                                                    {% if sorted_data %}
+                                                        {{ sorted_data|last|get_item:"kills"|floatformat:1 }}
+                                                    {% else %}
+                                                        0.0
+                                                    {% endif %}
+                                                {% endwith %}
+                                            {% else %}
+                                                0.0
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            {% if low_equip_data %}
+                                                {% with sorted_data=low_equip_data|dictsort:"kills" %}
+                                                    {% if sorted_data %}
+                                                        {% with efficiency=sorted_data|last|get_item:"kills" %}
+                                                            {% if efficiency > 1 %}
+                                                                <span class="badge bg-success">High</span>
+                                                            {% elif efficiency > 0.5 %}
+                                                                <span class="badge bg-primary">Medium</span>
+                                                            {% else %}
+                                                                <span class="badge bg-danger">Low</span>
+                                                            {% endif %}
+                                                        {% endwith %}
+                                                    {% else %}
+                                                        <span class="badge bg-danger">Low</span>
+                                                    {% endif %}
+                                                {% endwith %}
+                                            {% else %}
+                                                <span class="badge bg-danger">Low</span>
+                                            {% endif %}
                                         </td>
                                     </tr>
+                                    {% endwith %}
+                                    
+                                    {% with med_equip_data=economic_data|dictsort:"equip_value"|slice:"5:15" %}
                                     <tr>
                                         <td>Medium ($2000-$4000)</td>
-                                        <td>{{ economic_data|dictsortbykey:"equip_value"|slice:"5:15"|dictsort:"kills"|last.kills|floatformat:1 }}</td>
                                         <td>
-                                            {% with med_eff=economic_data|dictsortbykey:"equip_value"|slice:"5:15"|dictsort:"kills"|last.kills|floatformat:1 %}
-                                                {% if med_eff > 1 %}
-                                                    <span class="badge bg-success">High</span>
-                                                {% elif med_eff > 0.5 %}
-                                                    <span class="badge bg-primary">Medium</span>
-                                                {% else %}
-                                                    <span class="badge bg-danger">Low</span>
-                                                {% endif %}
-                                            {% endwith %}
+                                            {% if med_equip_data %}
+                                                {% with sorted_data=med_equip_data|dictsort:"kills" %}
+                                                    {% if sorted_data %}
+                                                        {{ sorted_data|last|get_item:"kills"|floatformat:1 }}
+                                                    {% else %}
+                                                        0.0
+                                                    {% endif %}
+                                                {% endwith %}
+                                            {% else %}
+                                                0.0
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            {% if med_equip_data %}
+                                                {% with sorted_data=med_equip_data|dictsort:"kills" %}
+                                                    {% if sorted_data %}
+                                                        {% with efficiency=sorted_data|last|get_item:"kills" %}
+                                                            {% if efficiency > 1 %}
+                                                                <span class="badge bg-success">High</span>
+                                                            {% elif efficiency > 0.5 %}
+                                                                <span class="badge bg-primary">Medium</span>
+                                                            {% else %}
+                                                                <span class="badge bg-danger">Low</span>
+                                                            {% endif %}
+                                                        {% endwith %}
+                                                    {% else %}
+                                                        <span class="badge bg-danger">Low</span>
+                                                    {% endif %}
+                                                {% endwith %}
+                                            {% else %}
+                                                <span class="badge bg-danger">Low</span>
+                                            {% endif %}
                                         </td>
                                     </tr>
+                                    {% endwith %}
+                                    
+                                    {% with high_equip_data=economic_data|dictsort:"equip_value"|slice:"15:" %}
                                     <tr>
                                         <td>High (&gt;$4000)</td>
-                                        <td>{{ economic_data|dictsortbykey:"equip_value"|slice:"15:"|dictsort:"kills"|last.kills|floatformat:1 }}</td>
                                         <td>
-                                            {% with high_eff=economic_data|dictsortbykey:"equip_value"|slice:"15:"|dictsort:"kills"|last.kills|floatformat:1 %}
-                                                {% if high_eff > 1 %}
-                                                    <span class="badge bg-success">High</span>
-                                                {% elif high_eff > 0.5 %}
-                                                    <span class="badge bg-primary">Medium</span>
-                                                {% else %}
-                                                    <span class="badge bg-danger">Low</span>
-                                                {% endif %}
-                                            {% endwith %}
+                                            {% if high_equip_data %}
+                                                {% with sorted_data=high_equip_data|dictsort:"kills" %}
+                                                    {% if sorted_data %}
+                                                        {{ sorted_data|last|get_item:"kills"|floatformat:1 }}
+                                                    {% else %}
+                                                        0.0
+                                                    {% endif %}
+                                                {% endwith %}
+                                            {% else %}
+                                                0.0
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            {% if high_equip_data %}
+                                                {% with sorted_data=high_equip_data|dictsort:"kills" %}
+                                                    {% if sorted_data %}
+                                                        {% with efficiency=sorted_data|last|get_item:"kills" %}
+                                                            {% if efficiency > 1 %}
+                                                                <span class="badge bg-success">High</span>
+                                                            {% elif efficiency > 0.5 %}
+                                                                <span class="badge bg-primary">Medium</span>
+                                                            {% else %}
+                                                                <span class="badge bg-danger">Low</span>
+                                                            {% endif %}
+                                                        {% endwith %}
+                                                    {% else %}
+                                                        <span class="badge bg-danger">Low</span>
+                                                    {% endif %}
+                                                {% endwith %}
+                                            {% else %}
+                                                <span class="badge bg-danger">Low</span>
+                                            {% endif %}
                                         </td>
                                     </tr>
+                                    {% endwith %}
                                 </tbody>
                             </table>
                         </div>
@@ -234,8 +307,8 @@
                                     <td>{{ weapon.times_active }}</td>
                                     <td>{{ weapon.rounds_used }}</td>
                                     <td>{{ weapon.total_kills|default:0 }}</td>
-                                    <td>{{ weapon.avg_kills_when_active|floatformat:2 }}</td>
-                                    <td>${{ weapon.avg_money|floatformat:0 }}</td>
+                                    <td>{{ weapon.avg_kills_when_active|floatformat:2|default:"0.00" }}</td>
+                                    <td>${{ weapon.avg_money|floatformat:0|default:"0" }}</td>
                                     <td>
                                         {% if weapon.avg_kills_when_active > 1 %}
                                             <span class="badge bg-success">Excellent</span>
@@ -255,60 +328,6 @@
                 {% else %}
                     <p class="text-center">No weapon data available yet. Play more matches with the GSI config installed to collect data.</p>
                 {% endif %}
-                
-                <div class="mt-4">
-                    <h5>Performance Insights</h5>
-                    
-                    <div class="row mt-3">
-                        <div class="col-md-6">
-                            <div class="card">
-                                <div class="card-body">
-                                    <h6>Strengths</h6>
-                                    <ul>
-                                        {% if weapon_analysis %}
-                                            {% with best_weapon=weapon_analysis.0 %}
-                                                <li>Your best performing weapon is the <strong>{{ best_weapon.weapon__name|slice:"7:" }}</strong> with an average of {{ best_weapon.avg_kills_when_active|floatformat:2 }} kills per active round.</li>
-                                            {% endwith %}
-                                            
-                                            {% with most_used=weapon_analysis|dictsort:"times_active"|last %}
-                                                <li>You are most comfortable with the <strong>{{ most_used.weapon__name|slice:"7:" }}</strong>, using it {{ most_used.times_active }} times.</li>
-                                            {% endwith %}
-                                            
-                                            {% if weapon_analysis|length > 2 %}
-                                                <li>You have good weapon diversity, using {{ weapon_analysis|length }} different weapons effectively.</li>
-                                            {% endif %}
-                                        {% else %}
-                                            <li>Play more matches to generate weapon performance insights.</li>
-                                        {% endif %}
-                                    </ul>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <div class="col-md-6">
-                            <div class="card">
-                                <div class="card-body">
-                                    <h6>Areas for Improvement</h6>
-                                    <ul>
-                                        {% if weapon_analysis %}
-                                            {% with worst_weapon=weapon_analysis|dictsort:"avg_kills_when_active"|first %}
-                                                {% if worst_weapon.avg_kills_when_active < 0.3 and worst_weapon.times_active > 5 %}
-                                                    <li>Consider practicing with the <strong>{{ worst_weapon.weapon__name|slice:"7:" }}</strong> as it has lower effectiveness ({{ worst_weapon.avg_kills_when_active|floatformat:2 }} avg. kills).</li>
-                                                {% endif %}
-                                            {% endwith %}
-                                            
-                                            <li>Practice weapon variety across different economic situations to improve adaptability.</li>
-                                            
-                                            <li>Consider the economic efficiency of your weapon choices - higher cost doesn't always mean better performance.</li>
-                                        {% else %}
-                                            <li>Play more matches to generate weapon performance insights.</li>
-                                        {% endif %}
-                                    </ul>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
             </div>
         </div>
     </div>

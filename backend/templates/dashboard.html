@@ -27,6 +27,45 @@
             </div>
         </div>
     </div>
+</div>
+{% else %}
+
+<div class="row">
+    <!-- User stats summary -->
+    <div class="col-md-6">
+        <div class="card stats-card mb-4">
+            <div class="card-header">
+                <h5>Your Performance Summary</h5>
+            </div>
+            <div class="card-body">
+                {% if user_stats %}
+                <div class="row text-center">
+                    <div class="col-6 col-md-3 mb-3">
+                        <div class="stats-value">{{ user_stats.total_matches }}</div>
+                        <div class="stats-label">Matches</div>
+                    </div>
+                    <div class="col-6 col-md-3 mb-3">
+                        <div class="stats-value">{{ user_stats.total_kills }}</div>
+                        <div class="stats-label">Kills</div>
+                    </div>
+                    <div class="col-6 col-md-3 mb-3">
+                        <div class="stats-value">{{ user_stats.kd_ratio }}</div>
+                        <div class="stats-label">K/D Ratio</div>
+                    </div>
+                    <div class="col-6 col-md-3 mb-3">
+                        <div class="stats-value">{{ user_stats.total_mvps }}</div>
+                        <div class="stats-label">MVPs</div>
+                    </div>
+                </div>
+                <div class="text-center mt-3">
+                    <a href="{% url 'my_stats' %}" class="btn btn-sm btn-ct-primary">View Full Stats</a>
+                    <a href="{% url 'my_weapon_analysis' %}" class="btn btn-sm btn-ct-secondary">Weapon Analysis</a>
+                </div>
+                {% else %}
+                <p class="text-center">No match data available yet. Play some CS2 with the GSI config installed to start collecting stats!</p>
+                {% endif %}
+            </div>
+        </div>
     </div>
     
     <!-- Connected Accounts -->
@@ -53,39 +92,49 @@
             </div>
         </div>
     </div>
-{% else %}
+</div>
 
+<!-- Recent matches -->
+{% if recent_matches %}
 <div class="row">
-    {% if user_stats %}
-    <!-- User stats summary -->
-    <div class="col-md-6">
-        <div class="card stats-card mb-4">
+    <div class="col-12">
+        <div class="card stats-card">
             <div class="card-header">
-                <h5>Your Performance Summary</h5>
+                <h5>Your Recent Matches</h5>
             </div>
             <div class="card-body">
-                <div class="row text-center">
-                    <div class="col-6 col-md-3 mb-3">
-                        <div class="stats-value">{{ user_stats.total_matches }}</div>
-                        <div class="stats-label">Matches</div>
-                    </div>
-                    <div class="col-6 col-md-3 mb-3">
-                        <div class="stats-value">{{ user_stats.total_kills }}</div>
-                        <div class="stats-label">Kills</div>
-                    </div>
-                    <div class="col-6 col-md-3 mb-3">
-                        <div class="stats-value">{{ user_stats.kd_ratio }}</div>
-                        <div class="stats-label">K/D Ratio</div>
-                    </div>
-                    <div class="col-6 col-md-3 mb-3">
-                        <div class="stats-value">{{ user_stats.total_mvps }}</div>
-                        <div class="stats-label">MVPs</div>
-                    </div>
-                </div>
-                <div class="text-center mt-3">
-                    <a href="{% url 'my_stats' %}" class="btn btn-sm btn-ct-primary">View Full Stats</a>
-                    <a href="{% url 'my_weapon_analysis' %}" class="btn btn-sm btn-ct-secondary">Weapon Analysis</a>
+                <div class="table-responsive">
+                    <table class="table table-stats">
+                        <thead>
+                            <tr>
+                                <th>Map</th>
+                                <th>Mode</th>
+                                <th>K/D/A</th>
+                                <th>Score</th>
+                                <th>Date</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for stat in recent_matches %}
+                            <tr>
+                                <td>{{ stat.match.map_name }}</td>
+                                <td>{{ stat.match.game_mode }}</td>
+                                <td>{{ stat.kills }}/{{ stat.deaths }}/{{ stat.assists }}</td>
+                                <td>{{ stat.score }}</td>
+                                <td>{{ stat.match.start_timestamp|date:"M d, Y" }}</td>
+                                <td>
+                                    <a href="{% url 'match_detail' stat.match.match_id %}" class="btn btn-sm btn-ct-primary">Details</a>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
                 </div>
             </div>
         </div>
     </div>
+</div>
+{% endif %}
+{% endif %}
+{% endblock %}

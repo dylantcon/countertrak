@@ -75,4 +75,13 @@ def dashboard(request):
 
 def setup_guide(request):
     """Setup guide for new users"""
-    return render(request, 'setup_guide.html')
+    # Pass steam_accounts to context if user is authenticated
+    steam_accounts = None
+    if request.user.is_authenticated:
+        steam_accounts = SteamAccount.objects.filter(user=request.user)
+    
+    context = {
+        'steam_accounts': steam_accounts
+    }
+    
+    return render(request, 'setup_guide.html', context)

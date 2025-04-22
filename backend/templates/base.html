@@ -140,6 +140,9 @@
                     <li class="nav-item">
                         <a class="nav-link" href="{% url 'my_weapon_analysis' %}">Weapon Analysis</a>
                     </li>
+		    <li class="nav-item">
+        		<a class="nav-link" href="{% url 'query_explorer' %}">Query Explorer</a>
+    		    </li>
                 </ul>
                 <ul class="navbar-nav">
                     {% if user.is_authenticated %}

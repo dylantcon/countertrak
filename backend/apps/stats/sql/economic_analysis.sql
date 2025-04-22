@@ -27,14 +27,14 @@ SELECT
     m.map_name,
     COUNT(DISTINCT m.match_id) AS matches_played,
     SUM(CASE 
-        WHEN (sa.team = 'CT' AND m.team_ct_score > m.team_t_score) OR
-             (sa.team = 'T' AND m.team_t_score > m.team_ct_score) 
+        WHEN (prs.team = 'CT' AND m.team_ct_score > m.team_t_score) OR
+             (prs.team = 'T' AND m.team_t_score > m.team_ct_score) 
         THEN 1 ELSE 0 
     END) AS matches_won,
     ROUND(
         (SUM(CASE 
-            WHEN (sa.team = 'CT' AND m.team_ct_score > m.team_t_score) OR
-                 (sa.team = 'T' AND m.team_t_score > m.team_ct_score) 
+            WHEN (prs.team = 'CT' AND m.team_ct_score > m.team_t_score) OR
+                 (prs.team = 'T' AND m.team_t_score > m.team_ct_score) 
             THEN 1 ELSE 0 
         END)::numeric / NULLIF(COUNT(DISTINCT m.match_id), 0)) * 100, 
     2) AS win_percentage

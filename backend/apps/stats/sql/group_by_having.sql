@@ -14,7 +14,10 @@ FROM
 JOIN 
     stats_playerweapon pw ON w.weapon_id = pw.weapon_id
 JOIN 
-    stats_playerroundstate prs ON pw.player_round_state_id = prs.id
+    stats_playerroundstate prs ON 
+        pw.match_id = prs.match_id AND
+        pw.round_number = prs.round_number AND
+        pw.steam_account_id = prs.steam_account_id
 WHERE 
     pw.state = 'active'
     AND prs.steam_account_id = ${steam_id}
@@ -37,9 +40,9 @@ SELECT
     COUNT(*) AS rounds_used,
     ROUND(AVG(prs.round_kills), 2) AS avg_kills,
     ROUND(AVG(prs.money), 2) AS avg_remaining_money,
-    SUM(CASE WHEN r.winning_team = sa.team THEN 1 ELSE 0 END) AS rounds_won,
+    SUM(CASE WHEN r.winning_team = prs.team THEN 1 ELSE 0 END) AS rounds_won,
     ROUND(
-        SUM(CASE WHEN r.winning_team = sa.team THEN 1 ELSE 0 END)::numeric / 
+        SUM(CASE WHEN r.winning_team = prs.team THEN 1 ELSE 0 END)::numeric / 
         COUNT(*) * 100, 
     2) AS strategy_win_rate
 FROM 
@@ -48,8 +51,6 @@ JOIN
     matches_round r ON 
         prs.match_id = r.match_id AND 
         prs.round_number = r.round_number
-JOIN 
-    accounts_steamaccount sa ON prs.steam_account_id = sa.steam_id
 WHERE 
     prs.steam_account_id = ${steam_id}
 GROUP BY 

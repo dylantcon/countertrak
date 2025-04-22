@@ -1,0 +1,219 @@
+{% extends 'base.html' %}
+{% load query_extras %}
+
+{% block title %}SQL Query Explorer | CounterTrak{% endblock %}
+
+{% block extra_css %}
+<style>
+    .query-textarea {
+        font-family: monospace;
+        min-height: 200px;
+        resize: vertical;
+        background-color: #f5f5f5;
+    }
+    
+    .results-container {
+        overflow-x: auto;
+    }
+    
+    pre.formatted-query {
+        background-color: #f5f5f5;
+        padding: 10px;
+        border-radius: 5px;
+        white-space: pre-wrap;
+        max-height: 200px;
+        overflow-y: auto;
+    }
+    
+    .table-results th {
+        font-weight: bold;
+        background-color: var(--ct-primary);
+        color: white;
+    }
+    
+    .table-results tr:nth-child(even) {
+        background-color: rgba(0, 0, 0, 0.03);
+    }
+    
+    .query-tag {
+        font-size: 12px;
+        background-color: #e9ecef;
+        padding: 2px 6px;
+        border-radius: 4px;
+        margin-right: 5px;
+        color: #495057;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1 class="mb-4">SQL Query Explorer</h1>
+        <p class="lead">Execute read-only SQL queries to explore the CounterTrak database.</p>
+        
+        <div class="alert alert-info">
+            <p><strong>Note:</strong> This tool only allows SELECT queries from the pre-built query collection.</p>
+            <p class="mb-0">Choose a query from the dropdown to analyze your game data.</p>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        <div class="card stats-card mb-4">
+            <div class="card-header">
+                <h5>Query Selector</h5>
+            </div>
+            <div class="card-body">
+                <form method="POST" id="query-form">
+                    {% csrf_token %}
+                    
+                    <div class="row mb-3">
+                        <div class="col-md-8">
+                            <label for="selected_query" class="form-label">Choose a Query:</label>
+                            <select class="form-select" id="selected_query" name="selected_query">
+                                <option value="">-- Select a pre-built query --</option>
+                                <optgroup label="Basic Queries">
+                                    {% for file in sql_files %}
+                                    <option value="{{ file }}" {% if selected_query == file %}selected{% endif %}>
+                                        {{ file|slice:":-4"|replace:"_,"|title }}
+                                    </option>
+                                    {% endfor %}
+                                </optgroup>
+                                <optgroup label="Advanced Queries">
+                                    {% for file in advanced_sql_files %}
+                                    <option value="advanced/{{ file }}" {% if selected_query == "advanced/"|add:file %}selected{% endif %}>
+                                        {{ file|slice:":-4"|replace:"_,"|title }}
+                                    </option>
+                                    {% endfor %}
+                                </optgroup>
+                            </select>
+                        </div>
+                        <div class="col-md-4 d-flex align-items-end">
+                            <button type="submit" class="btn btn-ct-primary">Execute Query</button>
+                        </div>
+                    </div>
+                    
+                    {% if query %}
+                    <div class="mb-3">
+                        <label for="query" class="form-label">SQL Query:</label>
+                        <textarea class="form-control query-textarea" id="query" name="query" readonly>{{ query }}</textarea>
+                    </div>
+                    {% endif %}
+                    
+                    <div class="mb-3">
+                        <div class="form-text">
+                            <span class="query-tag">SQL Parameters</span> The system will automatically replace parameters with default values:
+                            <ul class="small mt-2">
+                                <li><code>${steam_id}</code> - Uses your Steam ID if logged in, otherwise uses a default</li>
+                                <li><code>${match_id}</code> - Uses an existing match ID from the database</li>
+                                <li><code>${round_number}, ${equip_value}, ${money}, etc.</code> - Uses sensible defaults</li>
+                            </ul>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if error %}
+<div class="row">
+    <div class="col-12">
+        <div class="alert alert-danger">
+            <h5 class="alert-heading">Error:</h5>
+            <p>{{ error|linebreaksbr }}</p>
+            
+            {% if error_context %}
+                <hr>
+                <h6>Error Context:</h6>
+                <pre class="mb-0">{{ error_context }}</pre>
+            {% endif %}
+            
+            {% if error_suggestion %}
+                <hr>
+                <div class="alert alert-info mb-0">
+                    <strong>Suggestion:</strong> {{ error_suggestion }}
+                </div>
+            {% endif %}
+            
+            {% if "Could not find query file" in error %}
+                <hr>
+                <div class="alert alert-info mb-0">
+                    <strong>Looking for Economic Analysis?</strong> Try selecting "Map Performance" instead - the economic analysis data is included in that query.
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if results %}
+<div class="row">
+    <div class="col-12">
+        <div class="card stats-card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5>Query Results</h5>
+                <span class="badge bg-ct-primary">{{ results.count }} record{% if results.count != 1 %}s{% endif %}</span>
+            </div>
+            <div class="card-body">
+                {% if results.processed_query %}
+                <div class="mb-3">
+                    <h6>Processed Query:</h6>
+                    <pre class="formatted-query">{{ results.processed_query }}</pre>
+                    <p class="text-muted small">Parameters were automatically populated with default values.</p>
+                </div>
+                {% endif %}
+                <div class="results-container">
+                    {% if results.rows %}
+                        <table class="table table-stats table-results">
+                            <thead>
+                                <tr>
+                                    {% for column in results.columns %}
+                                    <th>{{ column }}</th>
+                                    {% endfor %}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for row in results.rows %}
+                                <tr>
+                                    {% for value in row %}
+                                    <td>
+                                        {% if value is None %}
+                                        <span class="text-muted">NULL</span>
+                                        {% else %}
+                                        {{ value }}
+                                        {% endif %}
+                                    </td>
+                                    {% endfor %}
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    {% else %}
+                        <div class="alert alert-warning">No results returned from query.</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Auto-submit the form when a query is selected
+        const selectEl = document.getElementById('selected_query');
+        
+        selectEl.addEventListener('change', function() {
+            if (this.value) {
+                document.getElementById('query-form').submit();
+            }
+        });
+    });
+</script>
+{% endblock %}

@@ -7,14 +7,12 @@ class SteamAccount(models.Model):
     player_name = models.CharField(max_length=100)
 
     def generate_auth_token(self):
-        """ generate unique auth token using steam_id and a random component """
-        return "S8RL9Z6Y22TYQK45JB4V8PHRJJMD9DS9"
-    #    for now, use hardcoded auth
-    #    import uuid
-    #    import hashlib
-    #    random_component = uuid.uuid4().hex
-    #    token_base = f"{self.steam_id}:{random_component}"
-    #    return hashlib.sha256(token_base.encode()).hexdigest()[:32].upper()
+        """ Generate unique auth token using steam_id and a random component """
+        import uuid
+        import hashlib
+        random_component = uuid.uuid4().hex
+        token_base = f"{self.steam_id}:{random_component}"
+        return hashlib.sha256(token_base.encode()).hexdigest()[:32].upper()
 
     def save(self, *args, **kwargs):
         if not self.auth_token:

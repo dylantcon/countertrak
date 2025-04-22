@@ -385,14 +385,14 @@ async def round_exists(match_id: str, round_number: int) -> bool:
 @sync_to_async
 def _ensure_steam_account_sync(steam_id: str, player_name: str) -> str:
     """
-    Synchronous implementation of steam account check/creation.
+    Check if a steam account exists without creating it.
 
     Args:
         steam_id: The Steam ID
         player_name: The player's name
 
     Returns:
-        The auth token for the account
+        The auth token if the account exists, None otherwise
     """
     try:
         with connection.cursor() as cursor:
@@ -407,23 +407,14 @@ def _ensure_steam_account_sync(steam_id: str, player_name: str) -> str:
                 # account exists, return auth token
                 return result[0]
             else:
-                # generate a unique auth token (this uses hardcoded for now)
-                from apps.accounts.models import SteamAccount
-                temp_account = SteamAccount(steam_id=steam_id)
-                auth_token = temp_account.generate_auth_token()
-
-                # create new account without a user_id for now
-                cursor.execute(
-                    """
-                    INSERT INTO accounts_steamaccount (steam_id, player_name, auth_token, user_id)
-                    VALUES (%s, %s, %s, NULL)
-                    """,
-                    [steam_id, player_name, auth_token]
+                # account doesn't exist, log warning and return None
+                logger.warning(
+                    f"Steam account {steam_id} ({player_name}) not found. " +
+                     "User must register first."
                 )
-                logger.info(f"Created new steam account: {steam_id}")
-                return auth_token
+                return None
     except Exception as e:
-        logger.error(f"Error ensuring steam account: {str(e)}")
+        logger.error(f"Error checking steam account: {str(e)}")
         return None
 
 async def ensure_steam_account(steam_id: str, player_name: str) -> str:
@@ -497,8 +488,14 @@ async def create_player_round_state(match_id: str, round_number: int, player_sta
     Returns:
         ID of the created player round state
     """
-    # first ensure the steam account exists
-    await ensure_steam_account(player_state.steam_id, player_state.name)
+    # first check if the steam account exists
+    auth_token = await ensure_steam_account(player_state.steam_id, player_state.name)
+
+    if not auth_token:
+        logger.info(
+            f"Skipping player state creation for {player_state.steam_id} " +
+             "- account not registered")
+        return None
     
     # create the player round state
     return await _create_player_round_state_sync(match_id, round_number, player_state)
@@ -548,7 +545,6 @@ def _player_round_state_exists_sync(match_id: str, round_number: int,
 
     Check to see if a given PlayerRoundState exists in the database records.
     """
-    # key (match_id, round_number, steam_account_id, state_timestamp)=(de_mirage_casual_76561198277157609_9a81c0b0-2e6e-4ae2-b3a3-efb89acf676d, 1, 76561198277157609, 2025-04-20 08:49:59+00) already exists.
     try:
         state_time = convert_unix_timestamp_to_datetime(player_state.state_timestamp) 
         with connection.cursor() as cursor:

@@ -45,7 +45,7 @@ def generate_config(request, steam_id):
         steam_account = SteamAccount.objects.get(steam_id=steam_id, user=request.user)
         context = {
             'steam_account': steam_account,
-            'host': request.get_host().split(':')[0]  # Remove port if present
+            'host': request.get_host().split(':')[0]  # remove port if present
         }
         response = render(request, 'accounts/gsi_config.cfg', context, content_type='text/plain')
         response['Content-Disposition'] = f'attachment; filename="gamestate_integration_countertrak.cfg"'

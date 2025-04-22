@@ -102,6 +102,13 @@ class MatchProcessor:
             # trivially log events before real processing occurs
             self._process_game_events(processed_data['changes'])
             
+            # if current phase is 'unknown' or 'warmup',
+            #  (e.g. not 'over', 'live', or 'freezetime'),
+            #  we should forgo any processing until player engagement is certain
+            if not self.match_phase_nominal(processed_data.get('match_state')):
+                highlight_logger.debug("Match phase state is not nominal - Passing payload...")
+                return
+
             # process entities in order of dependency
             await self._handle_match_data(processed_data)
             await self._handle_round_data(processed_data)
@@ -494,7 +501,7 @@ class MatchProcessor:
                     self.player_states_history[-1]
                 )
 
-            # critical: clear history for next round - this is what prevents duplicate persistence
+            # critical: clear history for next round, prevents duplicate persist
             self.player_states_history = []
             self.weapon_states_history = []
 
@@ -659,3 +666,10 @@ class MatchProcessor:
     def get_player_count(self) -> int:
         """Get the number of players in this match."""
         return len(self.player_states)
+
+#==============================================================================
+# helper methods
+#==============================================================================
+
+    def match_phase_nominal(self, ms: MatchState) -> bool:
+        return ms.phase != 'unknown' and ms.phase != 'warmup'

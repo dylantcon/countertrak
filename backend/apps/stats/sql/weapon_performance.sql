@@ -17,7 +17,9 @@ JOIN
     stats_playerweapon pw ON w.weapon_id = pw.weapon_id
 JOIN 
     stats_playerroundstate prs ON 
-        pw.player_round_state_id = prs.id
+        pw.match_id = prs.match_id AND
+        pw.round_number = prs.round_number AND
+        pw.steam_account_id = prs.steam_account_id
 WHERE 
     pw.state = 'active'
     AND prs.steam_account_id = ${steam_id}
@@ -38,7 +40,10 @@ FROM
 JOIN 
     stats_playerweapon pw ON w.weapon_id = pw.weapon_id
 JOIN 
-    stats_playerroundstate prs ON pw.player_round_state_id = prs.id
+    stats_playerroundstate prs ON 
+        pw.match_id = prs.match_id AND
+        pw.round_number = prs.round_number AND
+        pw.steam_account_id = prs.steam_account_id
 JOIN 
     matches_match m ON prs.match_id = m.match_id
 WHERE 

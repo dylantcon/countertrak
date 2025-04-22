@@ -1,6 +1,7 @@
 from django.shortcuts import render, redirect
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.forms import UserCreationForm
+from django.contrib.auth import logout
 from django.contrib import messages
 from .models import SteamAccount
 from .forms import SteamAccountForm
@@ -53,3 +54,9 @@ def generate_config(request, steam_id):
     except SteamAccount.DoesNotExist:
         messages.error(request, 'Steam account not found or not linked to your account')
         return redirect('profile')
+
+@login_required
+def logout_view(request):
+    # fixed logout view was required
+    logout(request)
+    return render(request, 'accounts/logout.html')

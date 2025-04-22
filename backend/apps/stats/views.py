@@ -131,22 +131,25 @@ def weapon_analysis(request, steam_id=None):
     
     # Simplified query - avoid using Case/When for now
     weapon_analysis = PlayerWeapon.objects.filter(
-        steam_account=steam_account,
-        state='active'  # Only look at active weapons
-    ).values(
-        'weapon__name', 'weapon__type', 'weapon_id'
-    ).annotate(
-        times_active=Count('id'),
-        rounds_used=Count('match', distinct=True),
-        total_kills=Sum('match__playerroundstate__round_kills', 
-                         filter=Q(match__playerroundstate__steam_account=steam_account)),
-        avg_kills_when_active=Avg('match__playerroundstate__round_kills',
-                                   filter=Q(match__playerroundstate__steam_account=steam_account)),
-        avg_money=Avg('match__playerroundstate__money',
-                       filter=Q(match__playerroundstate__steam_account=steam_account))
-    ).order_by('-times_active')
+    steam_account=steam_account,
+    state='active'
+).exclude(
+    Q(weapon__type__in=['Grenade', 'C4']) |  # Exclude these specific types
+    Q(weapon__type__isnull=True) |           # Exclude null types
+    Q(weapon__type='StackableItem')           # Exclude stackable items
+).values(
+    'weapon__name', 'weapon__type', 'weapon_id'
+).annotate(
+    times_active=Count('id'),
+    rounds_used=Count('match', distinct=True),
+    total_kills=Sum('match__playerroundstate__round_kills',
+                     filter=Q(match__playerroundstate__steam_account=steam_account)),
+    avg_kills_when_active=Avg('match__playerroundstate__round_kills',
+                               filter=Q(match__playerroundstate__steam_account=steam_account)),
+    avg_money=Avg('match__playerroundstate__money',
+                   filter=Q(match__playerroundstate__steam_account=steam_account))
+).order_by('-times_active')
     
-    print(f"Weapon analysis data count: {len(weapon_analysis)}")
     for weapon in weapon_analysis:
         print(f"Weapon: {weapon['weapon__name']}, Kills: {weapon.get('total_kills', 0)}, Times active: {weapon['times_active']}")
     

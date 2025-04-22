@@ -7,9 +7,12 @@ from django.utils import timezone
 
 # utilize our custom logger service
 from gsi.logging_service import payload_logger as logger
+from gsi.logging_service import get_colored_logger
 
 # import utility functions
 from gsi.utils import extract_base_match_id
+
+debug = get_colored_logger('payload_debug', 'light_purple')
 
 @dataclass
 class MatchState:
@@ -94,6 +97,7 @@ class PayloadExtractor:
         self.weapon_states: Dict[str, WeaponState] = {}
         
         # historical data tracking
+        self.previous_round_state = RoundState
         self.round_history: Dict[int, RoundState] = {}  # map round_number to roundstate
         self.processed_rounds: Set[int] = set()         # track which rounds have been processed
         
@@ -211,6 +215,7 @@ class PayloadExtractor:
                 
         round_data = payload.get('round', {})
         map_data = payload.get('map', {})
+
         
         # log raw round data for debugging
         raw_round_number = map_data.get('round', 0)
@@ -528,19 +533,31 @@ class PayloadExtractor:
         if round_state:
             old_phase = None if not self.current_round else self.current_round.phase
             new_phase = round_state.phase
+
+            # old round number is this incoming round_state minus one
+            old_round_number = round_state.round_number - 1
             
             # detect round completion (phase transition to 'over')
             if old_phase != 'over' and new_phase == 'over' and round_state.win_team:
                 if round_state.round_number not in self.processed_rounds:
-                    self.processed_rounds.add(round_state.round_number)
-                    logger.info(f"Round {round_state.round_number} completed. Winner: {round_state.win_team}")
+                    self.processed_rounds.add(old_round_number)
+                    logger.info(f"Round {old_round_number} completed. Winner: {round_state.win_team}")
             
-            # update current round state
+            # if we have a current_round state, it is now previous_round_state
+            if self.current_round:
+                self.previous_round_state = self.current_round
+                self.previous_round_state.round_number = old_round_number
+                # if new round state has round conclusion metadata, utilize it
+                if round_state.win_team and round_state.win_condition:
+                    self.previous_round_state.win_team = round_state.win_team
+                    self.previous_round_state.win_condition = round_state.win_condition
+
+            # update current internal round state with new state
             self.current_round = round_state
             
-            # store in history if it's a complete round state
+            # store previous round state in history if it's a complete round state
             if round_state.phase == 'over' and round_state.win_team:
-                self.round_history[round_state.round_number] = round_state
+                self.round_history[old_round_number] = self.previous_round_state
 
     def get_round_win_condition(self, round_number: int) -> Optional[str]:
         """

@@ -545,7 +545,6 @@ def _player_round_state_exists_sync(match_id: str, round_number: int,
 
     Check to see if a given PlayerRoundState exists in the database records.
     """
-    # key (match_id, round_number, steam_account_id, state_timestamp)=(de_mirage_casual_76561198277157609_9a81c0b0-2e6e-4ae2-b3a3-efb89acf676d, 1, 76561198277157609, 2025-04-20 08:49:59+00) already exists.
     try:
         state_time = convert_unix_timestamp_to_datetime(player_state.state_timestamp) 
         with connection.cursor() as cursor:

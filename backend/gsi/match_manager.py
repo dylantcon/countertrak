@@ -15,6 +15,7 @@ from typing import Dict, Optional, List
 import json
 
 from gsi.match_processor import MatchProcessor
+from gsi.django_integration import ensure_steam_account
 
 class MatchManager:
     """
@@ -59,10 +60,10 @@ class MatchManager:
         try:
             # extract base_match id using provider.steamid (game client owner)
             base_match_id = self._extract_match_id(payload)
+            player_name = payload.get('player', {}).get('name', 'unknown')
 
             if not base_match_id:
                 if self.is_menu_payload(payload):
-                    player_name = payload.get('player', {}).get('name', 'unknown')
                     logger.debug(f"Player {player_name} is in the lobby menu")
                 else:
                     logger.warning("Could not extract base_match_ID from payload")
@@ -72,7 +73,6 @@ class MatchManager:
             # extract owner and player steamids for ownership context
             owner_steam_id = payload.get('provider', {}).get('steamid')
             player_steam_id = payload.get('player', {}).get('steamid')
-            player_name = payload.get('player', {}).get('name', 'unknown')
 
             # player ids should be present
             if not owner_steam_id or not player_steam_id:
@@ -86,7 +86,11 @@ class MatchManager:
                 logger.debug(f"Client {owner_steam_id} is spectating {player_name} ({player_steam_id})")
 
             # get or create the match processor with owner context
-            processor = await self._get_or_create_processor(base_match_id, owner_steam_id)
+            processor = await self._get_or_create_processor(
+                    base_match_id, 
+                    owner_steam_id,
+                    player_name
+            )
             if not processor:
                 logger.error(f"Failed to create processor for match {base_match_id}")
                 return False
@@ -103,7 +107,8 @@ class MatchManager:
             logger.exception(e)
             return False
 
-    async def _get_or_create_processor(self, base_match_id: str, owner_steam_id: str) -> Optional[MatchProcessor]:
+    async def _get_or_create_processor(self, base_match_id: str, owner_steam_id: str,
+                                       player_name: str) -> Optional[MatchProcessor]:
         """
         Get an existing match processor or create a new one if it doesn't exist.
         
@@ -134,15 +139,23 @@ class MatchManager:
                     return processor
 
             try:
-                # generate a full match_id with uuid
-                full_match_id = generate_match_id(base_match_id)
+                # only create a matchprocessor if the user has registered
+                if await ensure_steam_account(owner_steam_id, player_name):
+                    # generate a full match_id with uuid
+                    full_match_id = generate_match_id(base_match_id)
 
-                # create a new processor with the generated full match_id
-                processor = MatchProcessor(base_match_id, full_match_id, owner_steam_id)
-                self.match_processors[full_match_id] = processor
-                logger.info(f"Created new match processor for match {full_match_id} owned by {owner_steam_id}")
-
-                return processor
+                    # create a new processor with the generated full match_id
+                    processor = MatchProcessor(
+                        base_match_id, 
+                        full_match_id, 
+                        owner_steam_id
+                    )
+                    self.match_processors[full_match_id] = processor
+                    logger.info(
+                        f"Created new match processor for match {full_match_id}" +
+                        f" owned by {owner_steam_id}"
+                    )
+                    return processor
             except Exception as e:
                 logger.error(f"Error creating match processor: {str(e)}")
                 logger.exception(e)

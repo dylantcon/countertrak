@@ -8,4 +8,5 @@ router.register(r'', views.MatchViewSet)
 
 urlpatterns = [
     path('', include(router.urls)),
+    path('delete/<str:match_id>/', views.delete_match, name='delete_match'),
 ]

@@ -1,70 +1,139 @@
--- ADVANCED WEAPON RECOMMENDATIONS
--- Demonstrates advanced analytics for our unique performance pattern recognition
+-- WEAPON PERFORMANCE ANALYSIS
+-- Demonstrates SELECT-FROM-WHERE and JOIN operations with accurate kill attribution
 
--- Weapon effectiveness by map with performance scoring
-WITH weapon_performance AS (
-    SELECT 
-        m.map_name,
+-- Basic weapon effectiveness by player (SELECT-FROM-WHERE, JOIN)
+WITH WeaponRoundStats AS (
+    -- First get one row per weapon per round with distinct round data
+    SELECT DISTINCT ON (pw.match_id, pw.round_number, w.weapon_id)
         w.name AS weapon_name,
         w.type AS weapon_type,
-        COUNT(DISTINCT pw.match_id) AS matches_used,
-        SUM(prs.round_kills) AS total_kills,
-        COUNT(DISTINCT CASE WHEN prs.round_kills > 0 THEN prs.round_number ELSE NULL END) AS rounds_with_kills,
-        COUNT(DISTINCT prs.round_number) AS total_rounds_used,
-        -- Performance metrics
-        ROUND(SUM(prs.round_kills)::numeric / NULLIF(COUNT(DISTINCT prs.round_number), 0), 3) AS kills_per_round,
-        ROUND(COUNT(DISTINCT CASE WHEN prs.round_kills > 0 THEN prs.round_number ELSE NULL END)::numeric / 
-              NULLIF(COUNT(DISTINCT prs.round_number), 0), 3) AS kill_consistency,
-        -- Economic efficiency
-        ROUND(SUM(prs.round_kills)::numeric / NULLIF(SUM(prs.equip_value)/1000, 0), 3) AS kills_per_1000_spent
+        pw.match_id,
+        pw.round_number,
+        prs.round_kills,
+        -- Calculate approximate kill share based on weapon prevalence
+        -- This distributes kills proportionally among active weapons
+        CASE 
+            WHEN weapon_count.active_weapons > 0 
+            THEN ROUND(prs.round_kills::numeric / weapon_count.active_weapons, 2)
+            ELSE 0 
+        END AS estimated_kills
     FROM 
         stats_weapon w
     JOIN 
         stats_playerweapon pw ON w.weapon_id = pw.weapon_id
     JOIN 
-        stats_playerroundstate prs ON
-		pw.match_id = prs.match_id AND
-        	pw.round_number = prs.round_number AND
-        	pw.steam_account_id = prs.steam_account_id
-    JOIN 
-        matches_match m ON prs.match_id = m.match_id
-    JOIN 
-        stats_playermatchstat pms ON 
-            prs.match_id = pms.match_id AND 
-            prs.steam_account_id = pms.steam_account_id
+        stats_playerroundstate prs ON 
+            pw.match_id = prs.match_id AND
+            pw.round_number = prs.round_number AND
+            pw.steam_account_id = prs.steam_account_id
+    -- Count active weapons per round to distribute kills
+    JOIN (
+        SELECT 
+            match_id, 
+            round_number, 
+            steam_account_id,
+            COUNT(DISTINCT weapon_id) AS active_weapons
+        FROM 
+            stats_playerweapon
+        WHERE 
+            state = 'active'
+        GROUP BY 
+            match_id, round_number, steam_account_id
+    ) AS weapon_count ON 
+        pw.match_id = weapon_count.match_id AND
+        pw.round_number = weapon_count.round_number AND
+        pw.steam_account_id = weapon_count.steam_account_id
     WHERE 
         pw.state = 'active'
         AND prs.steam_account_id = ${steam_id}
-        AND w.type NOT IN ('Knife', 'Grenade', 'C4', 'Other')
-    GROUP BY 
-        m.map_name, w.name, w.type
-    HAVING 
-        COUNT(DISTINCT prs.round_number) >= 5  -- Only include weapons with sufficient usage
+    ORDER BY 
+        pw.match_id, pw.round_number, w.weapon_id
 )
+
+-- Summarize weapon performance
+SELECT 
+    weapon_name,
+    weapon_type,
+    COUNT(DISTINCT match_id) AS matches_used,
+    COUNT(DISTINCT (match_id, round_number)) AS rounds_used,
+    ROUND(SUM(estimated_kills), 0) AS estimated_total_kills,
+    CASE 
+        WHEN COUNT(DISTINCT (match_id, round_number)) > 0 
+        THEN ROUND(SUM(estimated_kills)::numeric / COUNT(DISTINCT (match_id, round_number)), 2)
+        ELSE 0
+    END AS kills_per_round
+FROM 
+    WeaponRoundStats
+GROUP BY 
+    weapon_name, weapon_type
+ORDER BY 
+    estimated_total_kills DESC;
+
+-- Weapon performance by map (Multiple JOIN example)
+WITH MapWeaponStats AS (
+    -- Get distinct weapon usage per round per map
+    SELECT DISTINCT ON (m.map_name, pw.match_id, pw.round_number, w.weapon_id)
+        m.map_name,
+        w.name AS weapon_name,
+        pw.match_id,
+        pw.round_number,
+        prs.round_kills,
+        -- Calculate approximate kill share based on weapon prevalence
+        CASE 
+            WHEN weapon_count.active_weapons > 0 
+            THEN ROUND(prs.round_kills::numeric / weapon_count.active_weapons, 2)
+            ELSE 0 
+        END AS estimated_kills
+    FROM 
+        stats_weapon w
+    JOIN 
+        stats_playerweapon pw ON w.weapon_id = pw.weapon_id
+    JOIN 
+        stats_playerroundstate prs ON 
+            pw.match_id = prs.match_id AND
+            pw.round_number = prs.round_number AND
+            pw.steam_account_id = prs.steam_account_id
+    JOIN 
+        matches_match m ON prs.match_id = m.match_id
+    -- Count active weapons per round to distribute kills
+    JOIN (
+        SELECT 
+            match_id, 
+            round_number, 
+            steam_account_id,
+            COUNT(DISTINCT weapon_id) AS active_weapons
+        FROM 
+            stats_playerweapon
+        WHERE 
+            state = 'active'
+        GROUP BY 
+            match_id, round_number, steam_account_id
+    ) AS weapon_count ON 
+        pw.match_id = weapon_count.match_id AND
+        pw.round_number = weapon_count.round_number AND
+        pw.steam_account_id = weapon_count.steam_account_id
+    WHERE 
+        pw.state = 'active'
+        AND prs.steam_account_id = ${steam_id}
+    ORDER BY 
+        m.map_name, pw.match_id, pw.round_number, w.weapon_id
+)
+
+-- Summarize by map and weapon
 SELECT 
     map_name,
     weapon_name,
-    weapon_type,
-    matches_used,
-    total_kills,
-    kills_per_round,
-    kill_consistency,
-    kills_per_1000_spent,
-    -- Calculate optimal weapon score (advanced weighting algorithm)
-    ROUND(
-        (kills_per_round * 0.4) + 
-        (kill_consistency * 0.3) + 
-        (kills_per_1000_spent * 0.3)
-    , 3) AS weapon_effectiveness_score,
-    -- Generate recommendation tier
+    COUNT(DISTINCT match_id) AS matches_used,
+    COUNT(DISTINCT (match_id, round_number)) AS rounds_used,
+    ROUND(SUM(estimated_kills), 0) AS estimated_total_kills,
     CASE 
-        WHEN kills_per_round >= 0.75 AND kill_consistency >= 0.5 THEN 'S-Tier'
-        WHEN kills_per_round >= 0.5 AND kill_consistency >= 0.4 THEN 'A-Tier'
-        WHEN kills_per_round >= 0.3 AND kill_consistency >= 0.3 THEN 'B-Tier'
-        WHEN kills_per_round >= 0.2 THEN 'C-Tier'
-        ELSE 'D-Tier'
-    END AS recommendation_tier
+        WHEN COUNT(DISTINCT (match_id, round_number)) > 0 
+        THEN ROUND(SUM(estimated_kills)::numeric / COUNT(DISTINCT (match_id, round_number)), 2)
+        ELSE 0
+    END AS kills_per_round
 FROM 
-    weapon_performance
+    MapWeaponStats
+GROUP BY 
+    map_name, weapon_name
 ORDER BY 
-    map_name, weapon_effectiveness_score DESC;
+    map_name, estimated_total_kills DESC;

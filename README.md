@@ -8,17 +8,17 @@
 	- [Relational Schema Design](#Relational-Schema-Design)
 	- [Normalization and Functional Dependencies](#Normalization-and-Functional-Dependencies)
 - [Functionality Details](#Functionality-Details)
-	- [[#Basic Database Operations]]
-	- [[#Advanced Analytics Functions]]
-- [[#Implementation Details]]
-	- [[#System Architecture]]
-	- [[#Technology Stack]]
-	- [[#Data Flow and Processing Pipeline]]
-- [[#Experiences and Challenges]]
-	- [[#Technical Challenges]]
-	- [[#Lessons Learned]]
-	- [[#Future Extensions]]
-- [[#References]]
+	- [Basic Database Operations](#Basic-Database-Operations)
+	- [Advanced Analytics Functions](#Advanced-Analytics-Functions)
+- [Implementation Details](#Implementation-Details)
+	- [System Architecture](#System-Architecture)
+	- [Technology Stack](#Technology-Stack)
+	- [Data Flow and Processing Pipeline](#Data-Flow-and-Processing-Pipeline)
+- [Experiences and Challenges](#Experiences-and-Challenges)
+	- [Technical Challenges](#Technical-Challenges)
+	- [Lessons Learned](#Lessons-Learned)
+	- [Future Extensions](#Future-Extensions)
+- [References](#References)
 #### Development Team
 1. **Dylan Connolly** (dtc22h@fsu.edu)
 2. **Zack Lima** (zol21@fsu.edu)
@@ -52,11 +52,11 @@ The entities we identified include:
 8. **PlayerMatchStats** - Aggregate performance statistics for players in matches
 
 These entities and their relationships are visualized in the comprehensive ER diagram below:
-![counterTrak ERD](imgs/finctrakerd.png)
+![counterTrak ERD](finctrakerd.png)
 This diagram illustrates several important design decisions. First, we established a clear separation between user accounts and Steam identities, allowing a single user to track multiple Steam accounts. Second, we implemented a hierarchical structure from matches to rounds to player states, enabling detailed temporal analysis. Third, we created a specialized entity for weapon tracking to support our advanced analytics functions.
 ### Relational Schema Design
 To transform our conceptual ER model into an implementable database design, we developed a detailed relational schema that preserves all entity relationships while optimizing for both data integrity and query performance. The resulting schema consists of eight tables with carefully defined primary and foreign key relationships.
-$$
+```math
  \begin{aligned}
  &\text{Users}( \underline{steam\_id}, \text{username, password\_hash} ) \\ \\
  &\text{SteamAccounts}(\underline{steam\_id}, \text{user\_id, auth\_token, player\_name} ) \\
@@ -65,9 +65,8 @@ $$
  &\text{Rounds}( \underline{match\_id, round\_number}, \text{phase, timestamp, winning\_team,} \\ & \qquad \quad \; \text{win\_condition}) \\
  &\exists \quad \text{FK: Round.match\_id references Match}(\underline{match\_id}) 
  \end{aligned}
- 
-$$
-$$
+```
+```math
 \begin{aligned}
  &\text{PlayerRoundStates}( \underline{match\_id, round\_number, steam\_id} \text{, health, armor, } \\
  & \qquad \qquad \qquad \qquad \quad \text{money, equip\_value, round\_kills, state\_timestamp}) \\
@@ -83,7 +82,7 @@ $$
  &\exists \quad \text{FK: PlayerMatchStats.steam\_id references SteamAccount}(\underline{steam\_id}) \\
  &\exists \quad \text{FK: PlayerMatchStats.match\_id references Match}(\underline{match\_id})
 \end{aligned}
-$$
+```
 This schema includes several noteworthy features. We implemented composite primary keys in the Rounds, PlayerRoundStates, and PlayerWeapons tables to efficiently represent hierarchical relationships. The temporal aspect of game state tracking is captured through timestamps in appropriate tables, enabling precise sequence analysis. Additionally, we created a pre-populated Weapons table to serve as a reference for all in-game weapons, improving both performance and data consistency.
 ### Normalization and Functional Dependencies
 Our schema design adheres to Boyce-Codd Normal Form (BCNF), ensuring efficient data storage and minimizing anomalies. We identified and addressed the following functional dependencies:
@@ -469,7 +468,7 @@ def get_weapon_analysis(steam_id: str) -> List[Dict[Any, Any]]:
 This advanced functionality sets CounterTrak apart from simpler statistical tracking systems, providing players with actionable insights rather than just raw numbers. The Performance Pattern Recognition engine identifies strengths, weaknesses, and optimal strategies based on each player's unique gameplay patterns.
 ## Implementation Details
 CounterTrak employs a multi-tier, event-driven architecture designed to efficiently process game state data in real-time while maintaining data consistency and system responsiveness. The architecture consists of several key components, each with specific responsibilities in the data flow pipeline. The high-level architecture is illustrated in the diagram below:
-![Image](imgs/ctrak_architecture.png)
+![Image](ctrak_architecture.png)
 At the top level, the **Asynchronous GSI Server** component (implemented in `backend/gsi/async_server.py`) receives game state payloads from multiple CS2 clients simultaneously. This component uses Python's `asyncio` framework to provide non-blocking I/O, allowing it to handle many concurrent connections efficiently without creating a thread per connection. The server authenticates incoming payloads using token validation and routes them to the appropriate match processor.
 
 The **Match/Player Manager** component (`backend/gsi/match_manager.py`) serves as a central coordination point, tracking active matches and creating new match processors as needed. This component maintains a dictionary of active match processors keyed by match ID, ensuring that each match's data remains isolated and consistent. The manager is primarily responsible for routing payloads to their appropriate `MatchProcessors`, but does perform some basic preliminary validation to ensure that the data hails from a new or in-progress match.

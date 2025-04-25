@@ -469,6 +469,7 @@ This advanced functionality sets CounterTrak apart from simpler statistical trac
 ## Implementation Details
 CounterTrak employs a multi-tier, event-driven architecture designed to efficiently process game state data in real-time while maintaining data consistency and system responsiveness. The architecture consists of several key components, each with specific responsibilities in the data flow pipeline. The high-level architecture is illustrated in the diagram below:
 ![Image](ctrak_architecture.png)
+
 At the top level, the **Asynchronous GSI Server** component (implemented in `backend/gsi/async_server.py`) receives game state payloads from multiple CS2 clients simultaneously. This component uses Python's `asyncio` framework to provide non-blocking I/O, allowing it to handle many concurrent connections efficiently without creating a thread per connection. The server authenticates incoming payloads using token validation and routes them to the appropriate match processor.
 
 The **Match/Player Manager** component (`backend/gsi/match_manager.py`) serves as a central coordination point, tracking active matches and creating new match processors as needed. This component maintains a dictionary of active match processors keyed by match ID, ensuring that each match's data remains isolated and consistent. The manager is primarily responsible for routing payloads to their appropriate `MatchProcessors`, but does perform some basic preliminary validation to ensure that the data hails from a new or in-progress match.

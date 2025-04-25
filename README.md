@@ -1,13 +1,13 @@
 # **The `CounterTrak` Application**
 
 ## Table of Contents
-- [[#Introduction]]
-	- [[#Motivations]]
-- [[#Database Design]]
-	- [[#Entity-Relationship Model]]
-	- [[#Relational Schema Design]]
-	- [[#Normalization and Functional Dependencies]]
-- [[#Functionality Details]]
+- [Introduction](#Introduction)
+	- [Motivations](#Motivations)
+- [Database Design](#Database-Design)
+	- [Entity-Relationship Model](#Entity-Relationship-Model)
+	- [Relational Schema Design](#Relational-Schema-Design)
+	- [Normalization and Functional Dependencies](#Normalization-and-Functional-Dependencies)
+- [Functionality Details](#Functionality-Details)
 	- [[#Basic Database Operations]]
 	- [[#Advanced Analytics Functions]]
 - [[#Implementation Details]]

@@ -7,14 +7,33 @@ import sys
 from datetime import datetime
 import colorlog
 
-# Configure root logger
+# Color definitions
+COLORS = {
+    'DEBUG': 'cyan',
+    'INFO': 'green',
+    'WARNING': 'yellow',
+    'ERROR': 'red',
+    'CRITICAL': 'red,bg_white',
+}
+
+# Configure the root logger with colored handlers. The plain module loggers
+# (gsi, match_manager, match_processor, payload) have no handlers of their own
+# and propagate to root, so these handlers are what color their output. The file
+# handler uses force_color=True to write ANSI codes to the (non-TTY) log file;
+# view with `less -R countertrak.log`.
+_root_console_handler = logging.StreamHandler(sys.stdout)
+_root_console_handler.setFormatter(colorlog.ColoredFormatter(
+    '%(log_color)s%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    log_colors=COLORS, style='%'))
+
+_root_file_handler = logging.FileHandler('countertrak.log')
+_root_file_handler.setFormatter(colorlog.ColoredFormatter(
+    '%(log_color)s%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    log_colors=COLORS, style='%', force_color=True))
+
 logging.basicConfig(
     level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler('countertrak.log')
-    ]
+    handlers=[_root_console_handler, _root_file_handler]
 )
 
 # Create named loggers for different components
@@ -26,15 +45,6 @@ payload_logger = logging.getLogger('payload')
 # Make sure all loggers propagate to the root logger
 for logger in [gsi_logger, match_manager_logger, match_processor_logger, payload_logger]:
     logger.propagate = True
-
-# Color definitions
-COLORS = {
-    'DEBUG': 'cyan',
-    'INFO': 'green',
-    'WARNING': 'yellow',
-    'ERROR': 'red',
-    'CRITICAL': 'red,bg_white',
-}
 
 def get_colored_logger(name, highlight_color=None):
     """
@@ -71,8 +81,16 @@ def get_colored_logger(name, highlight_color=None):
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(formatter)
     
-    # Create file handler with standard formatter (no colors)
-    file_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    # Create file handler with a colored formatter so the ANSI color codes are
+    # written to the log file too. force_color=True is required because the file
+    # is not a TTY, so colorlog would otherwise strip the codes. View with `less -R`.
+    file_formatter = colorlog.ColoredFormatter(
+        '%(log_color)s%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        log_colors=formatter_colors,
+        secondary_log_colors={},
+        style='%',
+        force_color=True
+    )
     file_handler = logging.FileHandler('countertrak.log')
     file_handler.setFormatter(file_formatter)
     

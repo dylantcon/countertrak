@@ -5,6 +5,13 @@
 
 {% block extra_css %}
 <style>
+    /* Collapsible grenade-estimate disclaimer: swap the info icon for an X
+       while the banner is expanded (Bootstrap toggles .collapsed on the button). */
+    .disclaimer-toggle { line-height: 1; }
+    .disclaimer-toggle .icon-x { display: none; }
+    .disclaimer-toggle:not(.collapsed) .icon-info { display: none; }
+    .disclaimer-toggle:not(.collapsed) .icon-x { display: inline-block; }
+
     .performance-card {
         border-radius: 10px;
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
@@ -282,15 +289,34 @@
         <div class="card stats-card mb-4">
             <div class="card-header d-flex justify-content-between align-items-center">
                 <h5>Grenade Impact</h5>
-                <span class="badge bg-warning text-dark">Estimated</span>
+                <div class="d-flex align-items-center gap-2">
+                    <span class="badge bg-warning text-dark">Estimated</span>
+                    <button class="btn btn-sm btn-link p-0 text-secondary disclaimer-toggle collapsed"
+                            type="button" data-bs-toggle="collapse" data-bs-target="#grenadeDisclaimer"
+                            aria-expanded="false" aria-controls="grenadeDisclaimer"
+                            aria-label="About these grenade estimates" title="About these grenade estimates">
+                        <svg class="icon-info" xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
+                            <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/>
+                            <path d="m8.93 6.588-2.29.287-.082.38.45.083c.294.07.352.176.288.469l-.738 3.468c-.194.897.105 1.319.808 1.319.545 0 1.178-.252 1.465-.598l.088-.416c-.2.176-.492.246-.686.246-.275 0-.375-.193-.304-.533L8.93 6.588zM9 4.5a1 1 0 1 1-2 0 1 1 0 0 1 2 0z"/>
+                        </svg>
+                        <svg class="icon-x" xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
+                            <path d="M2.146 2.854a.5.5 0 1 1 .708-.708L8 7.293l5.146-5.147a.5.5 0 0 1 .708.708L8.707 8l5.147 5.146a.5.5 0 0 1-.708.708L8 8.707l-5.146 5.147a.5.5 0 0 1-.708-.708L7.293 8 2.146 2.854Z"/>
+                        </svg>
+                    </button>
+                </div>
             </div>
             <div class="card-body">
-                <div class="alert alert-secondary">
-                    CS2's Game State Integration provides no killfeed, so grenade kills
-                    are <strong>inferred</strong> from inventory and ammo changes: a kill is
-                    credited to a grenade only when one was thrown within its fuse/burn
-                    window and no shot was fired. A multi-kill in one tick is high confidence;
-                    a lone inferred kill is a softer estimate. Throws are tracked exactly.
+                <div class="collapse" id="grenadeDisclaimer">
+                    <div class="alert alert-secondary small py-2">
+                        Grenade kills are <strong>inferred</strong>: CS2's
+                        <a href="https://developer.valvesoftware.com/wiki/Counter-Strike:_Global_Offensive_Game_State_Integration"
+                           target="_blank" rel="noopener noreferrer">Game State Integration</a>
+                        feed has no killfeed, so a kill is read from inventory and ammo changes
+                        rather than a kill event. A kill counts as a grenade kill only when a
+                        grenade was thrown within its fuse/burn window and no shot was fired in
+                        that moment. Multi-kills in a single tick are high-confidence; a lone
+                        inferred kill is a softer estimate. Throw counts, by contrast, are exact.
+                    </div>
                 </div>
                 {% if grenade_analysis %}
                     <div class="table-responsive">

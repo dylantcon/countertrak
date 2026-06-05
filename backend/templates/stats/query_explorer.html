@@ -77,14 +77,14 @@
                                 <optgroup label="Basic Queries">
                                     {% for file in sql_files %}
                                     <option value="{{ file }}" {% if selected_query == file %}selected{% endif %}>
-                                        {{ file|slice:":-4"|replace:"_,"|title }}
+                                        {{ file|slice:":-4"|replace:"_, "|title }}
                                     </option>
                                     {% endfor %}
                                 </optgroup>
                                 <optgroup label="Advanced Queries">
                                     {% for file in advanced_sql_files %}
                                     <option value="advanced/{{ file }}" {% if selected_query == "advanced/"|add:file %}selected{% endif %}>
-                                        {{ file|slice:":-4"|replace:"_,"|title }}
+                                        {{ file|slice:":-4"|replace:"_, "|title }}
                                     </option>
                                     {% endfor %}
                                 </optgroup>

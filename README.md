@@ -14,6 +14,13 @@
 	- [System Architecture](#System-Architecture)
 	- [Technology Stack](#Technology-Stack)
 	- [Data Flow and Processing Pipeline](#Data-Flow-and-Processing-Pipeline)
+- [Setup, Operations, and Maintenance](#Setup-Operations-and-Maintenance)
+	- [Prerequisites](#Prerequisites)
+	- [Installation](#Installation)
+	- [Database Initialization and Seeding](#Database-Initialization-and-Seeding)
+	- [Running the System](#Running-the-System)
+	- [GSI Ingestion Pipeline, End-to-End](#GSI-Ingestion-Pipeline-End-to-End)
+	- [Operations and Troubleshooting](#Operations-and-Troubleshooting)
 - [Experiences and Challenges](#Experiences-and-Challenges)
 	- [Technical Challenges](#Technical-Challenges)
 	- [Lessons Learned](#Lessons-Learned)
@@ -158,314 +165,99 @@ DELETE FROM matches_match WHERE match_id = %s;
 ```
 These basic operations form the foundation upon which our advanced analytical features are built, ensuring data integrity and performance even under high-volume data processing conditions.
 ### Advanced Analytics Functions
-The core of CounterTrak's value proposition lies in its sophisticated Performance Pattern Recognition engine, which goes beyond simple statistics aggregation to identify meaningful patterns in player performance. This engine represents our most advanced functionality and employs complex temporal sequence analysis to extract actionable insights.
+CounterTrak treats "advanced analytics" as everything beyond single-table aggregation: multi-table, temporal analysis that turns the raw snapshot stream into actionable, per-player insight. These analytics reach the user through two surfaces. The first is the **SQL Query Explorer** (`/stats/query-explorer/`), a library of parameterized analytical queries grouped into Basic and Advanced categories that run read-only against the logged-in player's Steam ID. The second is the **Advanced Weapon Analysis** page (`/stats/weapon-analysis/`), which renders gun, grenade, and economic breakdowns produced by a Python kill-attribution engine.
 
-The Performance Pattern Recognition engine focuses on three key analytical dimensions:
-1. **Weapon Effectiveness Analysis**: This component analyzes how effectively a player uses different weapons across various contexts. Unlike basic statistics systems that simply count kills per weapon, our system considers the temporal relationship between weapon activation and successful eliminations:
+#### The snapshot-collapse principle
+
+Every analytical query in CounterTrak rests on one rule imposed by the data model. The `stats_playerroundstate` and `stats_playerweapon` tables hold **one row per GSI payload** (up to roughly ten per second), and each of those snapshot rows carries the same running `round_kills` counter for the round. Summing `round_kills` across these snapshots, or across a JOIN that multiplies them, inflates kill counts by an order of magnitude. The correct pattern, used throughout the current query set, collapses each round to a single value with `MAX(round_kills)` (the counter is monotonic within a round, so its maximum is the round total) before aggregating. Because a player may hold several weapons in a round, that round's kills are then split evenly across its distinct active weapons, so the estimated kills sum back to the true round total.
+
+#### Weapon effectiveness analysis
+
+The weapon effectiveness queries (`sql/weapon_performance.sql`, and the tiered recommender in `sql/advanced/weapon_recommendations.sql`) apply this collapse directly. The CTE chain builds one round-total per round, counts the active weapons in that round, and divides:
+
 ```sql
-WITH weapon_performance AS (
-    SELECT 
-        m.map_name,
-        w.name AS weapon_name,
-        w.type AS weapon_type,
-        COUNT(DISTINCT pw.match_id) AS matches_used,
-        SUM(prs.round_kills) AS total_kills,
-        COUNT(DISTINCT CASE WHEN prs.round_kills > 0 THEN prs.round_number ELSE NULL END) AS rounds_with_kills,
-        COUNT(DISTINCT prs.round_number) AS total_rounds_used,
-        ROUND(SUM(prs.round_kills)::numeric / NULLIF(COUNT(DISTINCT prs.round_number), 0), 3) AS kills_per_round,
-        ROUND(COUNT(DISTINCT CASE WHEN prs.round_kills > 0 THEN prs.round_number ELSE NULL END)::numeric / 
-              NULLIF(COUNT(DISTINCT prs.round_number), 0), 3) AS kill_consistency,
-        ROUND(SUM(prs.round_kills)::numeric / NULLIF(SUM(prs.equip_value)/1000, 0), 3) AS kills_per_1000_spent
-    FROM 
-        stats_weapon w
-    JOIN 
-        stats_playerweapon pw ON w.weapon_id = pw.weapon_id
-    JOIN 
-        stats_playerroundstate prs ON
-        pw.match_id = prs.match_id AND
-        pw.round_number = prs.round_number AND
-        pw.steam_account_id = prs.steam_account_id
-    JOIN 
-        matches_match m ON prs.match_id = m.match_id
-    JOIN 
-        stats_playermatchstat pms ON 
-            prs.match_id = pms.match_id AND 
-            prs.steam_account_id = pms.steam_account_id
-    WHERE 
-        pw.state = 'active'
-        AND prs.steam_account_id = ${steam_id}
-        AND w.type NOT IN ('Knife', 'Grenade', 'C4', 'Other')
-    GROUP BY 
-        m.map_name, w.name, w.type
-    HAVING 
-        COUNT(DISTINCT prs.round_number) >= 5
+WITH rk AS (                         -- one row per (match, round): the round's kill total
+    SELECT match_id, round_number, steam_account_id,
+           MAX(round_kills) AS round_kills
+    FROM stats_playerroundstate
+    WHERE steam_account_id = ${steam_id}
+    GROUP BY match_id, round_number, steam_account_id
+),
+aw AS (                              -- distinct weapons that were active that round
+    SELECT DISTINCT match_id, round_number, steam_account_id, weapon_id
+    FROM stats_playerweapon
+    WHERE state = 'active' AND steam_account_id = ${steam_id}
+),
+awc AS (                             -- how many active weapons share the round's kills
+    SELECT match_id, round_number, steam_account_id, COUNT(*) AS active_weapons
+    FROM aw GROUP BY match_id, round_number, steam_account_id
+),
+attr AS (                            -- even split: round_kills / active_weapons per weapon
+    SELECT aw.weapon_id, aw.match_id, aw.round_number,
+           rk.round_kills::numeric / NULLIF(awc.active_weapons, 0) AS est_kills
+    FROM aw
+    JOIN awc USING (match_id, round_number, steam_account_id)
+    JOIN rk  USING (match_id, round_number, steam_account_id)
 )
-SELECT 
-    map_name,
-    weapon_name,
-    weapon_type,
-    matches_used,
-    total_kills,
-    kills_per_round,
-    kill_consistency,
-    kills_per_1000_spent,
-    ROUND(
-        (kills_per_round * 0.4) + 
-        (kill_consistency * 0.3) + 
-        (kills_per_1000_spent * 0.3)
-    , 3) AS weapon_effectiveness_score,
-    CASE 
-        WHEN kills_per_round >= 0.75 AND kill_consistency >= 0.5 THEN 'S-Tier'
-        WHEN kills_per_round >= 0.5 AND kill_consistency >= 0.4 THEN 'A-Tier'
-        WHEN kills_per_round >= 0.3 AND kill_consistency >= 0.3 THEN 'B-Tier'
-        WHEN kills_per_round >= 0.2 THEN 'C-Tier'
-        ELSE 'D-Tier'
-    END AS recommendation_tier
-FROM 
-    weapon_performance
-ORDER BY 
-    map_name, weapon_effectiveness_score DESC;
+SELECT w.name AS weapon_name, w.type AS weapon_type,
+       COUNT(DISTINCT attr.match_id)                  AS times_used,
+       ROUND(SUM(attr.est_kills), 0)                  AS total_kills_with_weapon,
+       ROUND(SUM(attr.est_kills)::numeric /
+             NULLIF(COUNT(DISTINCT (attr.match_id, attr.round_number)), 0), 2) AS kills_per_round
+FROM attr
+JOIN stats_weapon w ON w.weapon_id = attr.weapon_id
+GROUP BY w.name, w.type
+ORDER BY total_kills_with_weapon DESC;
 ```
-- This query not only tracks kill statistics but calculates derived metrics like kill consistency (frequency of successful rounds), economic efficiency (kills per money spent), and a composite effectiveness score that weights these factors appropriately.
-2. **Economic Impact Analysis**: Our system examines how economic decisions affect performance by analyzing the relationship between equipment value, money management, and round outcomes. It analyzes various economic decisions including Full-Buy, Semi-Buy, Semi-Eco, and Eco strategies, and the round outcomes that result from them:
+
+The advanced recommender extends this per map and folds three normalized factors, namely kills per round, kill consistency (the share of rounds with at least one kill), and economic efficiency (kills per $1000 spent), into a weighted `weapon_effectiveness_score` and an S/A/B/C/D recommendation tier. The result tells a player which weapons to favor on which map.
+
+#### Economic impact analysis
+
+The economic queries (`sql/economic_analysis.sql`) bucket each round into Eco, Semi-Eco, Semi-Buy, or Full-Buy by average equipment value, then report win rate, average kills, and kills per $1000 for each bucket. Win rate is computed honestly, by comparing the round winner against the player's own team (`r.winning_team = rk.team`) rather than assuming every decided round was a win. A companion query uses the `LAG()` window function over the round sequence to measure economic momentum: how the previous round's buy level and its win or loss shift the current round's investment and outcome.
+
+#### Player-versus-field comparative analytics
+
+A newer family of queries answers "how do I compare?" rather than "how did I do?". All three build on `stats_playermatchstat`, which holds one authoritative, upserted row per player per match and therefore sidesteps snapshot inflation entirely:
+
+- `compare_percentile_ranking.sql` ranks the player against every other tracked player on kills, K/D, assists, MVPs, and score using `PERCENT_RANK()`.
+- `compare_map_edge.sql` surfaces the maps where the player's per-match output most exceeds the average of all other players on that same map.
+- `compare_playstyle_signature.sql` characterizes how a player plays through role ratios (support, impact, utility, dueling, firepower) and each ratio's deviation from the field average.
+
+The percentile query captures the shape of all three: aggregate per player, rank with a window function, then compare the target against the field.
+
 ```sql
--- ECONOMIC ANALYSIS QUERIES
--- Demonstrates economic decision analysis and impact on performance
--- Economic round state analysis
-WITH round_economics AS (
-    SELECT 
-        m.match_id,
-        m.map_name,
-        r.round_number,
-        r.winning_team,
-        CASE 
-            WHEN AVG(prs.equip_value) < 1000 THEN 'Eco (< $1000)'
-            WHEN AVG(prs.equip_value) BETWEEN 1000 AND 2500 THEN 'Semi-Eco ($1000-$2500)'
-            WHEN AVG(prs.equip_value) BETWEEN 2501 AND 4000 THEN 'Semi-Buy ($2501-$4000)'
-            WHEN AVG(prs.equip_value) > 4000 THEN 'Full Buy (> $4000)'
-        END AS economic_state,
-        AVG(prs.money) AS avg_remaining_money,
-        AVG(prs.equip_value) AS avg_equip_value,
-        SUM(prs.round_kills) AS total_kills,
-        COUNT(DISTINCT prs.steam_account_id) AS player_count
-    FROM 
-        matches_match m
-    JOIN 
-        matches_round r ON m.match_id = r.match_id
-    JOIN 
-        stats_playerroundstate prs ON 
-            r.match_id = prs.match_id AND 
-            r.round_number = prs.round_number
-    WHERE 
-        prs.steam_account_id = ${steam_id}
-    GROUP BY 
-        m.match_id, m.map_name, r.round_number, r.winning_team
+WITH player_agg AS (
+    SELECT steam_account_id,
+           AVG(kills)                                   AS avg_kills,
+           SUM(kills)::numeric / NULLIF(SUM(deaths), 0) AS kd_ratio
+           -- ... assists, mvps, score elided ...
+    FROM stats_playermatchstat
+    GROUP BY steam_account_id
+),
+ranked AS (
+    SELECT steam_account_id, avg_kills, kd_ratio,
+           PERCENT_RANK() OVER (ORDER BY avg_kills) AS pr_kills,
+           PERCENT_RANK() OVER (ORDER BY kd_ratio)  AS pr_kd
+    FROM player_agg
 )
--- Economic strategy effectiveness analysis
-SELECT 
-    economic_state,
-    COUNT(DISTINCT (match_id, round_number)) AS rounds_played,
-    ROUND(COUNT(DISTINCT CASE WHEN winning_team = 'CT' OR winning_team = 'T' THEN (match_id, round_number) END)::numeric / 
-        NULLIF(COUNT(DISTINCT (match_id, round_number)), 0) * 100, 2) AS win_rate,
-    ROUND(SUM(total_kills)::numeric / NULLIF(COUNT(DISTINCT (match_id, round_number)), 0), 2) AS avg_kills_per_round,
-    ROUND(AVG(avg_equip_value), 2) AS avg_investment,
-    ROUND(AVG(avg_remaining_money), 2) AS avg_remaining_money,
-    ROUND(SUM(total_kills)::numeric / NULLIF(SUM(avg_equip_value) / 1000, 0), 2) AS kills_per_1000_spent
-FROM 
-    round_economics
-GROUP BY 
-    economic_state
-ORDER BY 
-    win_rate DESC;
--- Economic transitions analysis: impact of previous round's economy
-WITH round_sequence AS (
-    SELECT DISTINCT ON (prs1.match_id, prs1.round_number)
-        prs1.match_id,
-        prs1.round_number,
-        prs1.steam_account_id,
-        prs1.equip_value AS current_equip_value,
-        prs1.money AS current_money,
-        prs1.round_kills,
-        prs1.team,
-        r1.winning_team = prs1.team AS round_won,
-        LAG(prs1.equip_value) OVER (
-            PARTITION BY prs1.match_id
-            ORDER BY prs1.round_number
-        ) AS prev_equip_value,
-        LAG(r1.winning_team = prs1.team) OVER (
-            PARTITION BY prs1.match_id
-            ORDER BY prs1.round_number
-        ) AS prev_round_won
-    FROM 
-        stats_playerroundstate prs1
-    JOIN 
-        matches_round r1 ON 
-            prs1.match_id = r1.match_id AND 
-            prs1.round_number = r1.round_number
-    WHERE 
-        prs1.steam_account_id = ${steam_id}
-)
-SELECT 
-    CASE 
-        WHEN prev_equip_value < 1000 THEN 'After Eco (< $1000)'
-        WHEN prev_equip_value BETWEEN 1000 AND 2500 THEN 'After Semi-Eco ($1000-$2500)'
-        WHEN prev_equip_value BETWEEN 2501 AND 4000 THEN 'After Semi-Buy ($2501-$4000)'
-        WHEN prev_equip_value > 4000 THEN 'After Full Buy (> $4000)'
-        ELSE 'First Round'
-    END AS previous_economic_state,
-    CASE 
-        WHEN prev_round_won IS TRUE THEN 'Won'
-        WHEN prev_round_won IS FALSE THEN 'Lost'
-        ELSE 'First Round'
-    END AS previous_round_outcome,
-    COUNT(*) AS rounds_played,
-    ROUND(AVG(current_equip_value), 2) AS avg_current_investment,
-    ROUND(AVG(current_money), 2) AS avg_current_money,
-    ROUND(AVG(round_kills), 2) AS avg_kills,
-    ROUND(COUNT(CASE WHEN round_won THEN 1 END)::numeric / 
-          NULLIF(COUNT(*), 0) * 100, 2) AS win_percentage
-FROM 
-    round_sequence
-WHERE 
-    round_number > 1  -- Exclude first round since it doesn't have previous state
-GROUP BY 
-    previous_economic_state, previous_round_outcome
-HAVING 
-    COUNT(*) >= 3  -- Only include scenarios with at least 3 occurrences
-ORDER BY 
-    previous_economic_state, previous_round_outcome;
+SELECT 'Kills / match' AS metric,
+       ROUND(me.avg_kills, 2)                  AS your_value,
+       ROUND((me.pr_kills * 100)::numeric, 1)  AS percentile_rank
+FROM ranked me
+WHERE me.steam_account_id = ${steam_id};
 ```
-Our advanced analytics functions are implemented through a combination of complex SQL queries and Python-based post-processing. The `weapon_analyzer.py` module, for instance, uses a sophisticated temporal relationship algorithm to accurately attribute kills to specific weapons based on the sequence of state changes:
-```python
-def get_weapon_analysis(steam_id: str) -> List[Dict[Any, Any]]:
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute("""
-                -- ADVANCED WEAPON ANALYSIS QUERY
-                -- This query performs temporal sequence analysis to attribute kills
-                -- to the correct weapons based on which weapon was active when kills occurred.
-                WITH PlayerStateChanges AS (
-                    -- STEP 1: Identify points where round_kills increases
-                    -- This CTE analyzes the PlayerRoundState table to find moments when
-                    -- a player's kill count increases, indicating they got a kill.
-                    -- The LAG window function compares the current round_kills with the
-                    -- previous round_kills value (ordered by timestamp) to calculate the
-                    -- kill_increase (how many kills were just added).
-                    SELECT 
-                        prs1.match_id, 
-                        prs1.round_number,
-                        prs1.state_timestamp,
-                        -- Calculate kill increase using LAG window function
-                        -- This finds the exact moments when kills increased
-                        prs1.round_kills - LAG(prs1.round_kills, 1, 0) OVER (
-                            PARTITION BY prs1.match_id, prs1.round_number 
-                            ORDER BY prs1.state_timestamp
-                        ) AS kill_increase,
-                        prs1.money
-                    FROM stats_playerroundstate prs1
-                    WHERE 
-                        prs1.steam_account_id = %s
-                        AND prs1.round_kills > 0  -- Only include states with kills
-                ),
-                ActiveWeapons AS (
-                    -- STEP 2: Identify which weapon was active at each point in time
-                    -- This CTE tracks which weapons were 'active' (being used) at which times.
-                    -- We use ROW_NUMBER to identify unique weapon activations, avoiding
-                    -- counting every state update as a separate usage instance.
-                    SELECT
-                        pw.match_id,
-                        pw.round_number,
-                        pw.weapon_id,
-                        pw.state_timestamp,
-                        w.name AS weapon_name,
-                        w.type AS weapon_type,
-                        -- Rank each weapon state by timestamp within round
-                        -- This helps identify distinct weapon activations
-                        ROW_NUMBER() OVER (
-                            PARTITION BY pw.match_id, pw.round_number, pw.weapon_id 
-                            ORDER BY pw.state_timestamp
-                        ) AS activation_rank
-                    FROM stats_playerweapon pw
-                    JOIN stats_weapon w ON pw.weapon_id = w.weapon_id
-                    WHERE 
-                        pw.steam_account_id = %s
-                        AND pw.state = 'active'  -- Only include active weapons
-                        -- Exclude non-weapon items like grenades, C4, etc.
-                        AND w.type NOT IN ('Grenade', 'C4')
-                        AND w.type IS NOT NULL
-                        AND w.type != 'StackableItem'
-                ),
-                WeaponKills AS (
-                    -- STEP 3: Join kills with active weapons to attribute kills correctly
-                    -- This CTE correlates kills with active weapons based on timestamps.
-                    -- We join PlayerStateChanges with ActiveWeapons where:
-                    -- 1. They're in the same match and round
-                    -- 2. The kill timestamp is >= the weapon activation timestamp
-                    -- 3. There was an actual kill increase
-                    -- This temporal relationship analysis is the key to attributing
-                    -- kills to the correct weapons.
-                    SELECT
-                        aw.weapon_id,
-                        aw.weapon_name,
-                        aw.weapon_type,
-                        -- Count distinct rounds where this weapon was used
-                        COUNT(DISTINCT CONCAT(aw.match_id, '-', aw.round_number)) AS rounds_used,
-                        -- Count total state records (approximates usage frequency)
-                        COUNT(aw.match_id) AS state_count,
-                        -- Sum kill increases that occurred while this weapon was active
-                        SUM(CASE WHEN psc.kill_increase > 0 THEN psc.kill_increase ELSE 0 END) AS total_kills,
-                        -- Track money for economic analysis
-                        SUM(psc.money) AS total_money
-                    FROM ActiveWeapons aw
-                    LEFT JOIN PlayerStateChanges psc ON 
-                        -- Join on match and round
-                        aw.match_id = psc.match_id 
-                        AND aw.round_number = psc.round_number
-                        -- The kill happened AFTER this weapon became active
-                        AND psc.state_timestamp >= aw.state_timestamp
-                        -- Only include actual kill increases
-                        AND (psc.kill_increase > 0)
-                    GROUP BY aw.weapon_id, aw.weapon_name, aw.weapon_type
-                )
-                -- STEP 4: Final output with calculated metrics
-                -- This final query calculates performance metrics like:
-                -- - Average kills per round
-                -- - Average money during weapon usage
-                -- - Overall weapon effectiveness
-                SELECT
-                    weapon_id,
-                    weapon_name,
-                    weapon_type,
-                    rounds_used,
-                    state_count,
-                    total_kills,
-                    -- Calculate average kills per round
-                    CASE WHEN rounds_used > 0 THEN total_kills::float / rounds_used ELSE 0 END AS avg_kills,
-                    -- Calculate average money during weapon usage
-                    CASE WHEN state_count > 0 THEN total_money::float / state_count ELSE 0 END AS avg_money
-                FROM WeaponKills
-                ORDER BY state_count DESC;  -- Sort by usage frequency
-            """, [steam_id, steam_id])
-            # process the query results into a list of dictionaries
-            # this makes the data easy to work with in django views
-            weapon_analysis = []
-            for row in cursor.fetchall():
-                weapon_analysis.append({
-                    'weapon_id': row[0],
-                    'weapon__name': row[1],
-                    'weapon__type': row[2],
-                    'rounds_used': row[3],
-                    'times_active': row[4],
-                    'total_kills': row[5],
-                    'avg_kills_when_active': row[6],
-                    'avg_money': row[7]
-                })
-            return weapon_analysis
-    except Exception as e:
-        logger.error(f"Error in weapon analysis for {steam_id}: {str(e)}")
-        return []
-```
-This advanced functionality sets CounterTrak apart from simpler statistical tracking systems, providing players with actionable insights rather than just raw numbers. The Performance Pattern Recognition engine identifies strengths, weaknesses, and optimal strategies based on each player's unique gameplay patterns.
+
+#### Kill attribution engine
+
+The Advanced Weapon Analysis page is powered by a shared **kill-attribution engine** (`apps/stats/utils/kill_attribution.py`). Because the GSI feed has no killfeed, the engine infers every weapon-level kill from state deltas across the snapshot stream. For each rise in `round_kills` it attributes the kill, in priority order, to one source: the active firearm if its `ammo_clip` dropped at that snapshot, meaning a shot was fired (high confidence); otherwise a lethal grenade (HE, incendiary, or molotov) if one was thrown within its fuse or burn window (high confidence on a multi-kill tick, medium otherwise); otherwise the active firearm as a low-confidence fallback. Knife kills and kills with no supporting evidence are left unattributed rather than guessed. Both the gun and grenade reports run off this single pass, so each kill is credited exactly once and never double-counted between them. The engine's main limitation is the whole-second snapshot resolution: actions that collapse into the same second cannot be ordered, so recovering the true per-kill weapon in those cases would require parsing match demo (`.dem`) files.
+
+Two analyzers consume the engine. `weapon_analyzer.py` (`get_weapon_analysis`) reports, per firearm, rounds used, times active, attributed kills, average kills when active, and average money, excluding grenade-attributed kills so the gun and grenade tables never overlap. `grenade_analyzer.py` (`get_grenade_analysis`) reports, per grenade type, the exactly-tracked throw count alongside inferred kill estimates and kills per throw, which the page renders as its Grenade Impact table.
+
+#### Performance pattern recognition (experimental)
+
+The repository also contains a Performance Pattern Recognition engine (`gsi/performance_pattern_recognition.py`) that composes weapon-effectiveness, economic, and (currently stubbed) weapon-sequence analyses into natural-language insights and recommendations. It is an aspirational module rather than a shipped feature: it is not yet wired into any view or template, and it predates the snapshot-collapse refactor described above. It is best read as a prototype for future work, not a description of current behavior.
+
 ## Implementation Details
 CounterTrak employs a multi-tier, event-driven architecture designed to efficiently process game state data in real-time while maintaining data consistency and system responsiveness. The architecture consists of several key components, each with specific responsibilities in the data flow pipeline. The high-level architecture is illustrated in the diagram below:
 ![Image](ctrak_architecture.png)
@@ -549,6 +341,70 @@ def extract_match_state(self, payload: Dict, timestamp: int) -> Optional[MatchSt
     )
 ```
 The multi-tier architecture and data flow pipeline of CounterTrak demonstrate a sophisticated approach to real-time game data processing. By implementing asynchronous I/O throughout the system, we've created a solution that efficiently handles the high-volume, bursty nature of GSI data while maintaining responsiveness. The well-defined responsibility boundaries between components (GSI server, match processors, database layer) provide clear separation of concerns, making the system both maintainable and extensible. This architecture not only meets the requirements of our current implementation but also establishes a solid foundation for future enhancements, such as more advanced analytics algorithms or integration with additional data sources.
+## Setup, Operations, and Maintenance
+This section is the practical companion to the architectural discussion above. It documents how to stand up CounterTrak from a clean checkout, how game data flows through the ingestion pipeline at the level of individual function calls, and how to diagnose the failure modes we have actually encountered in operation. Where the earlier sections explain *what* the system is and *why* it is designed that way, this section explains *how* to run, seed, and maintain it.
+
+The repository is laid out with a Python virtual environment at the project root (`venv/`) and the Django project under `backend/`. Unless noted otherwise, every command below is run from the `backend/` directory with the virtual environment active.
+
+### Prerequisites
+- **PostgreSQL 14+**, with a database and role matching the credentials you will place in `.env`.
+- **Python 3.10+** with the ability to create virtual environments.
+- The CS2 client that will feed the system, configured with a Game State Integration config file. A working example lives at the repository root as `gamestate_integration_GSI.cfg`; it is installed into the game's `csgo/cfg/` directory and points the client at the GSI server's `host:port` with a matching `auth` token.
+
+### Installation
+```bash
+# from the repository root
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt          # Django 5.2, DRF, aiohttp, colorlog, pexpect, python-dotenv, psycopg
+
+# configure environment
+cp backend/.env.example backend/.env      # then edit DB_*, SECRET_KEY, GSI_HOST/PORT, STEAM_API_KEY
+```
+The `.env` file is the single source of configuration for both servers; `backend/.env.example` enumerates every variable that is read. In the deployed environment `.env` is owned `root:www-data` with mode `0640`, so management commands and ad-hoc database scripts must be run **as the `www-data` user** (for example `sudo -u www-data ...`) - running them as your own user will fail to read the file and therefore fail to connect to the database.
+
+### Database Initialization and Seeding
+Bringing up a fresh database is a single command:
+```bash
+# from backend/, with the venv active
+python manage.py migrate     # creates the schema AND seeds reference data
+```
+`migrate` applies the schema migrations and then runs the data migration `0008_seed_weapons`, which populates the `stats_weapon` reference table with all 45 CS2 weapons (`weapon_id`, `name`, `type`, `max_clip`). The seed is an idempotent upsert, so it is safe to re-run and never duplicates rows. Because the ingestion pipeline resolves every weapon by name against this table, seeding it is part of schema setup rather than a separate step you have to remember.
+
+The canonical weapon list lives in `backend/apps/stats/weapon_data.py` and is the single source of truth shared by the migration and the `load_weapons` management command. `load_weapons` remains available for **manual re-seeding** - most usefully after a bare `manage.py flush`, which empties tables without re-running migrations:
+```bash
+python manage.py load_weapons   # manual re-seed; prints "... 45 weapons (EXPECTED: 45)"
+```
+To reset the database completely, `backend/wipeall.py` drops and recreates the `public` schema and re-runs `migrate` (which re-seeds automatically). Run it from `backend/`.
+
+### Running the System
+CounterTrak is two cooperating servers: the asynchronous GSI ingestion server (`backend/gsi/async_server.py`, default port `3000`) and the Django web/API server (`manage.py runserver`, port `8000`). Both are blocking event loops, so `backend/run_servers.py` launches each in its own subprocess and multiplexes their output to a common stream.
+
+- **Development:** `python backend/run_servers.py` from the repository root (with the venv active) starts both servers and tears them down cleanly on exit.
+- **Production:** the system runs under systemd as `countertrak.service` (`User=www-data`, `WorkingDirectory=` the repository root, `ExecStart=` the venv Python running `run_servers.py`). Manage it with the usual unit commands:
+```bash
+sudo systemctl restart countertrak.service   # apply changes to GSI Python code
+sudo systemctl status  countertrak.service
+sudo journalctl -u countertrak.service -f
+```
+A restart is required after editing any of the long-lived GSI modules (`async_server`, `match_manager`, `match_processor`, `payloadextractor`, `django_integration`), since those run inside the persistent process. It is **not** required after re-seeding reference data such as the Weapon table.
+
+### GSI Ingestion Pipeline, End-to-End
+The following traces a single weapon observation from the CS2 client to a persisted `stats_playerweapon` row, naming the function at each hop. This is the path to follow when weapon, kill, or round data is missing.
+
+1. **Reception & authentication** - `gsi/async_server.py::GSIServer.handle_gsi_payload`. The CS2 client `POST`s a JSON payload to `/`. The handler parses it and calls `_authenticate_payload`, which validates `payload["auth"]["token"]` against the in-memory `TokenCache` (backed by `accounts_steamaccount.auth_token`, refreshed every 10 minutes). An unknown token yields `401` and the payload is discarded; a valid one is forwarded to `match_manager.route_payload`.
+2. **Routing** - `gsi/match_manager.py::MatchManager.route_payload`. A stable `base_match_id` is derived from `provider.steamid` + map + mode (`gsi/utils.py::extract_base_match_id`). Menu payloads and payloads missing `provider.steamid`/`player.steamid` are dropped here. `_get_or_create_processor` then returns the existing `MatchProcessor` for that base id, resumes a still-open match (`find_open_match`, to survive a mid-match restart), or mints a new one - but only after `ensure_steam_account` confirms the client owner is a registered Steam account.
+3. **Extraction** - `gsi/payloadextractor.py::PayloadExtractor`. `extract_all_weapons` walks `player.weapons` and builds a `{slot: WeaponState}` dictionary, tagging each `WeaponState` with the `player.steamid` it belongs to; sibling methods extract the match, round, and player states. The extractor deliberately decouples raw GSI JSON from the database models.
+4. **Accumulation** - `gsi/match_processor.py::MatchProcessor`. Because the database stores **one row per snapshot**, the processor appends each payload's weapon dictionary to `weapon_states_history` (and player states to `player_states_history`) rather than writing immediately. Persistence is deferred to a round boundary, guarded by `persistence_lock` and the `rounds_persisted` set so a round is written exactly once.
+5. **Persistence** - `gsi/match_processor.py::_persist_round_data` -> `gsi/django_integration.py::batch_create_player_weapons` -> `create_player_weapon_states`. For each accumulated weapon, the name is resolved to a `weapon_id` via a cached lookup (`_lookup_weapon_id`, backed by the seeded reference table), and the row is inserted with `INSERT ... ON CONFLICT (match_id, round_number, steam_account_id, weapon_id, state_timestamp) DO NOTHING`. The temporal unique constraint makes re-persistence idempotent, which is what lets a resumed match safely re-process rounds.
+
+The single most important property to internalize is from step 4: **one database row per GSI payload**. Counters such as `round_kills` are cumulative per snapshot, so any analytical query must take `MAX(round_kills)` per `(match, round, player)` rather than `SUM` - summing across snapshots, or across a join that multiplies snapshot rows, produces large-scale kill inflation.
+
+### Operations and Troubleshooting
+- **Logs.** Both servers log to `backend/countertrak.log` (and to stdout, captured by `journalctl` under systemd). The log lines are colorized with ANSI escape codes that are also written into the file, so view it with `less -R countertrak.log` and strip the codes (`sed 's/\x1b\[[0-9;]*m//g'`) before feeding it to tools that expect plain text.
+- **Symptom: `Unknown weapon` / `Created 0 weapon states`.** The `stats_weapon` table is empty or missing entries. Verify with a shell one-liner (`Weapon.objects.count()` should be `45`) and re-run `python manage.py load_weapons`. See [Database Initialization and Seeding](#Database-Initialization-and-Seeding).
+- **Symptom: the GSI server exits at startup before binding port 3000.** The logging subsystem opens `countertrak.log` eagerly at import time using a path relative to the working directory; if the `www-data` service user cannot write that file, the import raises and the process dies before it ever listens. Ensure `backend/countertrak.log` exists and is writable by `www-data`.
+- **Running database/management commands.** Always invoke them as the database-capable user, e.g. `sudo -u www-data /var/www/countertrak.dconn.dev/venv/bin/python manage.py <command>`, so that the `0640` `.env` is readable.
 ## Experiences and Challenges
 ### Technical Challenges
 Throughout the development of CounterTrak, our team encountered and overcame several significant technical challenges:

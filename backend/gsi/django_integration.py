@@ -2,8 +2,8 @@
 import os
 import django
 import time
-from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Tuple, Set
 from asgiref.sync import sync_to_async
 from django.utils import timezone
 from django.db import connection, transaction
@@ -219,14 +219,100 @@ def _match_exists_sync(match_id: str) -> bool:
 async def match_exists(match_id: str) -> bool:
     """
     Check if a match record exists.
-    
+
     Args:
         match_id: The ID of the match to check
-        
+
     Returns:
         True if match exists, False otherwise
     """
     return await _match_exists_sync(match_id)
+
+@sync_to_async
+def _find_open_match_sync(base_match_id: str, within_hours: int) -> Optional[str]:
+    """
+    Synchronous implementation of open-match lookup.
+
+    Finds the most recent still-open match (end_timestamp IS NULL) whose full
+    match_id shares this base. Used to resume a match after a server restart
+    wiped the in-memory processor map, instead of minting a fresh UUID and
+    duplicating the match record.
+
+    The recency window bounds the risk of resuming a long-abandoned match (whose
+    in-process inactivity finalizer never ran because the process died) and
+    accidentally merging a new same-map match into it.
+    """
+    try:
+        from gsi.utils import parse_match_id
+        cutoff = timezone.now() - timedelta(hours=within_hours)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT match_id
+                FROM matches_match
+                WHERE end_timestamp IS NULL
+                  AND match_id LIKE %s
+                  AND start_timestamp >= %s
+                ORDER BY start_timestamp DESC
+                """,
+                [base_match_id + '%', cutoff]
+            )
+            rows = cursor.fetchall()
+        # LIKE treats '_' as a wildcard, so confirm the exact base with parse.
+        for (match_id,) in rows:
+            base, _uuid = parse_match_id(match_id)
+            if base == base_match_id:
+                return match_id
+        return None
+    except Exception as e:
+        logger.error(f"Error finding open match for {base_match_id}: {str(e)}")
+        return None
+
+async def find_open_match(base_match_id: str, within_hours: int = 3) -> Optional[str]:
+    """
+    Find the most recent still-open match for a base match id, or None.
+
+    Args:
+        base_match_id: The base identifier (map_mode_steamid, no UUID)
+        within_hours: Only consider matches started within this many hours
+
+    Returns:
+        The full match_id to resume, or None to start a new match
+    """
+    return await _find_open_match_sync(base_match_id, within_hours)
+
+@sync_to_async
+def _get_persisted_round_numbers_sync(match_id: str) -> Set[int]:
+    """
+    Synchronous implementation: round numbers that already have persisted state.
+
+    A round's player states are only written when the round completes, so the
+    presence of any PlayerRoundState row means that round is fully persisted.
+    Priming a resumed processor with these prevents re-persisting (which would
+    create duplicate snapshots, since post-restart timestamps differ).
+    """
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT DISTINCT round_number FROM stats_playerroundstate WHERE match_id = %s",
+                [match_id]
+            )
+            return {row[0] for row in cursor.fetchall()}
+    except Exception as e:
+        logger.error(f"Error getting persisted rounds for {match_id}: {str(e)}")
+        return set()
+
+async def get_persisted_round_numbers(match_id: str) -> Set[int]:
+    """
+    Return the set of round numbers already persisted for a match.
+
+    Args:
+        match_id: The full match ID
+
+    Returns:
+        Set of round numbers that already have player-state rows
+    """
+    return await _get_persisted_round_numbers_sync(match_id)
 
 #==============================================================================
 # round operations
@@ -253,18 +339,33 @@ def _create_round_sync(match_id: str, round_number: int, phase: str,
         state_time = convert_unix_timestamp_to_datetime(timestamp)
 
         with connection.cursor() as cursor:
+            # Idempotent insert: concurrent round-creation paths (the awaited
+            # transition handler and the fire-and-forget winner update) both race
+            # to create the same round. ON CONFLICT turns the loser into a no-op
+            # instead of an IntegrityError; the unique_round constraint
+            # (match_id, round_number) is the backstop.
             cursor.execute(
                 """
                 INSERT INTO matches_round
                 (match_id, round_number, phase, timestamp, winning_team, win_condition)
                 VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (match_id, round_number) DO NOTHING
                 RETURNING id
                 """,
                 [match_id, round_number, phase, state_time, winning_team, win_condition]
             )
-            round_id = cursor.fetchone()[0]
-            logger.info(f"Created round record for match {match_id}, round {round_number}")
-            return round_id
+            row = cursor.fetchone()
+            if row:
+                logger.info(f"Created round record for match {match_id}, round {round_number}")
+                return row[0]
+            # Round already existed - return its id so callers still get a truthy result.
+            cursor.execute(
+                "SELECT id FROM matches_round WHERE match_id = %s AND round_number = %s",
+                [match_id, round_number]
+            )
+            existing = cursor.fetchone()
+            logger.debug(f"Round {round_number} for match {match_id} already existed; insert skipped")
+            return existing[0] if existing else None
     except Exception as e:
         logger.error(f"Error creating round: {str(e)}")
         return None
@@ -453,13 +554,16 @@ def _create_player_round_state_sync(match_id: str, round_number: int,
             # create timestamp from the player state or current time
             state_time = convert_unix_timestamp_to_datetime(player_state.state_timestamp)
             
-            # insert new player state
+            # insert new player state (idempotent: a re-persisted round must not
+            # create duplicate snapshots; the temporal unique constraint dedupes
+            # on (match, round, steam_account, state_timestamp))
             cursor.execute(
                 """
                 INSERT INTO stats_playerroundstate
                 (match_id, round_number, steam_account_id, health, armor,
                  money, equip_value, round_kills, team, state_timestamp)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (match_id, round_number, steam_account_id, state_timestamp) DO NOTHING
                 RETURNING id
                 """,
                 [
@@ -469,8 +573,10 @@ def _create_player_round_state_sync(match_id: str, round_number: int,
                     player_state.team, state_time
                 ]
             )
-            player_round_state_id = cursor.fetchone()[0]
-            logger.debug(f"Created player state for {player_state.steam_id} in match {match_id}, round {round_number}")
+            row = cursor.fetchone()
+            player_round_state_id = row[0] if row else None
+            if player_round_state_id:
+                logger.debug(f"Created player state for {player_state.steam_id} in match {match_id}, round {round_number}")
             return player_round_state_id
     except Exception as e:
         logger.error(f"Error creating player round state: {str(e)}")
@@ -582,6 +688,34 @@ async def player_round_state_exists(match_id: str, round_number: int,
 # player weapons operations
 #==============================================================================
 
+# Process-lifetime cache of weapon name -> weapon_id. The stats_weapon reference
+# table is seeded once (data migration / load_weapons) and never changes at
+# runtime, so memoizing successful lookups avoids a per-weapon, per-snapshot
+# query on the hot persistence path. Misses are deliberately NOT cached: an
+# unknown name can become resolvable if the table is (re)seeded while the server
+# is running, so we re-query until it resolves.
+_weapon_id_cache: Dict[str, int] = {}
+
+def _lookup_weapon_id(weapon_name: str) -> Optional[int]:
+    """Resolve a weapon name to its weapon_id, caching hits. None if unknown."""
+    cached = _weapon_id_cache.get(weapon_name)
+    if cached is not None:
+        return cached
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT weapon_id FROM stats_weapon WHERE name = %s",
+                [weapon_name]
+            )
+            result = cursor.fetchone()
+    except Exception as e:
+        logger.error(f"Error getting weapon ID for {weapon_name}: {str(e)}")
+        return None
+    if result:
+        _weapon_id_cache[weapon_name] = result[0]
+        return result[0]
+    return None
+
 @sync_to_async
 def _create_player_weapon_states_sync(match_id: str, round_number: int,
                                     steam_id: str, weapons: Dict[str, WeaponState]) -> int:
@@ -605,27 +739,26 @@ def _create_player_weapon_states_sync(match_id: str, round_number: int,
             # process each weapon
             for slot, weapon_state in weapons.items():
                 try:
-                    # get weapon id from name
-                    cursor.execute(
-                        "SELECT weapon_id FROM stats_weapon WHERE name = %s",
-                        [weapon_state.name]
-                    )
-                    result = cursor.fetchone()
-                    if not result:
+                    # resolve weapon id from name (cached; table is static after seeding)
+                    weapon_id = _lookup_weapon_id(weapon_state.name)
+                    if weapon_id is None:
                         logger.warning(f"Unknown weapon: {weapon_state.name}")
                         continue
-                    weapon_id = result[0]
 
                     # convert the unix timestamp from weapon_state to a datetime object
                     state_time = convert_unix_timestamp_to_datetime(weapon_state.state_timestamp)
 
-                    # insert using the original timestamp
+                    # insert using the original timestamp (idempotent: the temporal
+                    # unique constraint dedupes on
+                    # (match, round, steam_account, weapon, state_timestamp), so a
+                    # re-persisted round produces no duplicate weapon rows)
                     cursor.execute(
                         """
                         INSERT INTO stats_playerweapon
                         (match_id, round_number, steam_account_id, weapon_id,
                          state, ammo_clip, ammo_reserve, paintkit, state_timestamp)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (match_id, round_number, steam_account_id, weapon_id, state_timestamp) DO NOTHING
                         """,
                         [
                             match_id,
@@ -639,7 +772,7 @@ def _create_player_weapon_states_sync(match_id: str, round_number: int,
                             state_time
                         ]
                     )
-                    count += 1
+                    count += cursor.rowcount
                 except Exception as e:
                     logger.error(f"Error creating weapon state for {weapon_state.name}: {str(e)}")
 
@@ -667,7 +800,15 @@ async def create_player_weapon_states(match_id: str, round_number: str,
 async def batch_create_player_weapons(match_id: str, round_number: int, steam_id: str,
                                       weapon_states_history: List[Dict[str, WeaponState]]) -> int:
     """
-    Create weapon records from a list of weapon state dictionaries.
+    Create weapon records from a list of per-snapshot weapon-state dicts.
+
+    Idempotent and self-deduplicating: create_player_weapon_states inserts each
+    row with ON CONFLICT DO NOTHING against the temporal unique constraint
+    (match, round, steam_account, weapon, state_timestamp), so re-persisting a
+    round adds no duplicates. We therefore delegate straight to it rather than
+    pre-checking existence per weapon (a redundant, racy extra round-trip that
+    ON CONFLICT already handles correctly). Unknown weapon names are logged and
+    skipped inside the insert helper via the cached name lookup.
     """
     try:
         if not weapon_states_history:
@@ -675,41 +816,12 @@ async def batch_create_player_weapons(match_id: str, round_number: int, steam_id
             return 0
 
         total_count = 0
-
-        # Process each dictionary (snapshot) in the history list
         for weapon_states_dict in weapon_states_history:
             if not weapon_states_dict:
                 continue
-                
-            weapons_to_create = {}
-            
-            # Check each weapon in the dictionary
-            for slot, weapon_state in weapon_states_dict.items():
-                # Get weapon ID from name - using our async helper
-                weapon_id = await get_weapon_id_by_name(weapon_state.name)
-                
-                if not weapon_id:
-                    logger.warning(f"Unknown weapon: {weapon_state.name}")
-                    continue
-                    
-                # Check if this weapon record already exists
-                seen = await player_weapon_exists(
-                    match_id, round_number, steam_id, weapon_id, weapon_state.state_timestamp
-                )
-                
-                if seen:
-                    logger.debug(f"Skipping duplicate weapon record for {weapon_state.name}")
-                    continue
-                    
-                # Add to weapons to create
-                weapons_to_create[slot] = weapon_state
-            
-            # Create only weapons that don't exist yet
-            if weapons_to_create:
-                weapon_count = await create_player_weapon_states(
-                    match_id, round_number, steam_id, weapons_to_create
-                )
-                total_count += weapon_count
+            total_count += await create_player_weapon_states(
+                match_id, round_number, steam_id, weapon_states_dict
+            )
 
         conf_logger.info(f"Created {total_count} weapon states for player {steam_id} in match {match_id}, round {round_number}")
         return total_count
@@ -717,69 +829,6 @@ async def batch_create_player_weapons(match_id: str, round_number: int, steam_id
     except Exception as e:
         logger.error(f"Error creating weapon states history: {str(e)}")
         return 0
-
-@sync_to_async
-def _player_weapon_exists_sync(match_id: str, round_number: int, 
-                              steam_id: str, weapon_id: int, 
-                              state_timestamp: int) -> bool:
-    """
-    Synchronous implementation. 
-    Check if a PlayerWeapon record already exists in the database.
-    """
-    try:
-        state_time = convert_unix_timestamp_to_datetime(state_timestamp) 
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT COUNT(*) FROM stats_playerweapon
-                WHERE
-                    match_id = %s AND
-                    round_number = %s AND
-                    steam_account_id = %s AND
-                    weapon_id = %s AND
-                    state_timestamp = %s
-                """,
-                [
-                    match_id,
-                    round_number,
-                    steam_id,
-                    weapon_id,
-                    state_time
-                ]
-            )
-            return cursor.fetchone()[0] > 0
-    except Exception as e:
-        logger.error(f"Error checking weapon record existence: {str(e)}")
-        return False
-
-async def player_weapon_exists(match_id: str, round_number: int,
-                              steam_id: str, weapon_id: int,
-                              state_timestamp: int) -> bool:
-    """
-    Check if a PlayerWeapon record already exists in the database.
-    """
-    return await _player_weapon_exists_sync(
-        match_id, round_number, steam_id, weapon_id, state_timestamp
-    )
-
-@sync_to_async
-def _get_weapon_id_by_name_sync(weapon_name: str) -> Optional[int]:
-    """Synchronous implementation to get weapon ID by name"""
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "SELECT weapon_id FROM stats_weapon WHERE name = %s",
-                [weapon_name]
-            )
-            result = cursor.fetchone()
-            return result[0] if result else None
-    except Exception as e:
-        logger.error(f"Error getting weapon ID for {weapon_name}: {str(e)}")
-        return None
-
-async def get_weapon_id_by_name(weapon_name: str) -> Optional[int]:
-    """Get weapon ID by name asynchronously"""
-    return await _get_weapon_id_by_name_sync(weapon_name)
 
 #==============================================================================
 # player match statistics operations

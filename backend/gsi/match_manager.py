@@ -15,7 +15,9 @@ from typing import Dict, Optional, List
 import json
 
 from gsi.match_processor import MatchProcessor
-from gsi.django_integration import ensure_steam_account
+from gsi.django_integration import (
+    ensure_steam_account, find_open_match, get_persisted_round_numbers
+)
 
 class MatchManager:
     """
@@ -141,19 +143,35 @@ class MatchManager:
             try:
                 # only create a matchprocessor if the user has registered
                 if await ensure_steam_account(owner_steam_id, player_name):
-                    # generate a full match_id with uuid
-                    full_match_id = generate_match_id(base_match_id)
+                    # A server restart wipes this in-memory map mid-match. Rather
+                    # than mint a new UUID (which creates a duplicate match record
+                    # for the same real-world match), resume an existing still-open
+                    # match for this base id if one exists within the recency window.
+                    full_match_id = await find_open_match(base_match_id)
+                    resuming = full_match_id is not None
+                    if not full_match_id:
+                        full_match_id = generate_match_id(base_match_id)
 
-                    # create a new processor with the generated full match_id
+                    # create the processor (new or resumed) with the full match_id
                     processor = MatchProcessor(
-                        base_match_id, 
-                        full_match_id, 
+                        base_match_id,
+                        full_match_id,
                         owner_steam_id
                     )
+
+                    if resuming:
+                        # the match row already exists; mark it persisted and prime
+                        # rounds_persisted from the DB so already-saved rounds are
+                        # not written again as duplicate snapshots
+                        processor.match_persisted = True
+                        processor.rounds_persisted = await get_persisted_round_numbers(full_match_id)
+
                     self.match_processors[full_match_id] = processor
                     logger.info(
-                        f"Created new match processor for match {full_match_id}" +
-                        f" owned by {owner_steam_id}"
+                        f"{'Resumed' if resuming else 'Created new'} match processor "
+                        f"for match {full_match_id} owned by {owner_steam_id}" +
+                        (f" ({len(processor.rounds_persisted)} rounds already persisted)"
+                         if resuming else "")
                     )
                     return processor
             except Exception as e:
@@ -217,18 +235,32 @@ class MatchManager:
         """
         Periodically clean up completed matches to free up resources.
         """
-        # list of match ids to remove
+        # list of (match_id, processor) to remove
         to_remove = []
 
         # check each match processor for completion
         for match_id, processor in self.match_processors.items():
             if processor.is_match_completed():
-                to_remove.append(match_id)
+                to_remove.append((match_id, processor))
+
+        # finalize any match that wound down via inactivity rather than an explicit
+        # 'gameover'. Without this its last unpersisted round(s) -- and the match's
+        # end_timestamp -- would be dropped on removal. _handle_match_completion is
+        # guarded by the is_completed lock, so it is a no-op for already-finalized
+        # matches; leaving end_timestamp set also stops a stale match from being
+        # resumed later by find_open_match.
+        for match_id, processor in to_remove:
+            if not processor.is_completed and processor.match_state is not None:
+                try:
+                    logger.info(f"Finalizing inactive match {match_id} before cleanup")
+                    await processor._handle_match_completion()
+                except Exception as e:
+                    logger.error(f"Error finalizing inactive match {match_id}: {str(e)}")
 
         # remove completed matches
         if to_remove:
             async with self.lock:
-                for match_id in to_remove:
+                for match_id, _ in to_remove:
                     if match_id in self.match_processors:
                         del self.match_processors[match_id]
                         logger.info(f"Removed completed match {match_id}")

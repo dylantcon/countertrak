@@ -539,7 +539,11 @@ class PayloadExtractor:
             
             # detect round completion (phase transition to 'over')
             if old_phase != 'over' and new_phase == 'over' and round_state.win_team:
-                if round_state.round_number not in self.processed_rounds:
+                # check and mark the SAME round number. round_history is keyed by
+                # old_round_number, so processed_rounds must use it too -- the
+                # previous code checked round_number but added old_round_number,
+                # so a round could be reported/processed twice.
+                if old_round_number not in self.processed_rounds:
                     self.processed_rounds.add(old_round_number)
                     logger.info(f"Round {old_round_number} completed. Winner: {round_state.win_team}")
             

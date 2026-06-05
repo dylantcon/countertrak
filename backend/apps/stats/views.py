@@ -1,6 +1,7 @@
 from django.shortcuts import render, get_object_or_404
 from django.contrib.auth.decorators import login_required
-from django.db.models import Avg, Count, Sum, F, Q, Case, When, Value, FloatField, IntegerField
+from django.db import connection
+from django.db.models import Avg, Count, Sum, Max, F, Q, Case, When, Value, FloatField, IntegerField
 from .models import PlayerMatchStat, PlayerRoundState, PlayerWeapon, Weapon
 from .utils.weapon_analyzer import get_weapon_analysis
 from apps.accounts.models import SteamAccount
@@ -122,6 +123,11 @@ def weapon_analysis(request, steam_id=None):
     # use weapon_analysis sql query utility function
     weapon_analysis = get_weapon_analysis(steam_id)
 
+    # estimated grenade usage + kill attribution (GSI has no killfeed, so these
+    # are inferred from inventory + ammo deltas and are explicitly approximate)
+    from .utils.grenade_analyzer import get_grenade_analysis
+    grenade_analysis = get_grenade_analysis(steam_id)
+
     for weapon in weapon_analysis:
         print(
             f"Weapon: {weapon['weapon__name']}, " +
@@ -130,22 +136,34 @@ def weapon_analysis(request, steam_id=None):
         )
     
     # economic analysis - how does the player's spending correlate with performance?
-    economic_data = PlayerRoundState.objects.filter(
+    # stats_playerroundstate holds one snapshot row per GSI payload, so we first
+    # collapse to one row per (match, round) using MAX (round_kills is monotonic
+    # within a round, so MAX is the true round total) before exposing it. Summing
+    # round_kills across snapshots, as before, multiplied kills by the snapshot
+    # count and grossly over-reported them.
+    economic_rows = PlayerRoundState.objects.filter(
         steam_account=steam_account
     ).values(
-        'round_number', 'money', 'equip_value'
+        'match', 'round_number'
     ).annotate(
-        kills=Sum('round_kills')  # use sum instead of count for round_kills
+        round_equip=Max('equip_value'),
+        round_kills_total=Max('round_kills')
     ).order_by('match', 'round_number')
+
+    economic_data = [
+        {'equip_value': row['round_equip'], 'kills': row['round_kills_total']}
+        for row in economic_rows
+    ]
     
     print(f"Economic data count: {len(economic_data)}")
     
     context = {
         'steam_account': steam_account,
         'weapon_analysis': weapon_analysis,
+        'grenade_analysis': grenade_analysis,
         'economic_data': economic_data,
     }
-    
+
     return render(request, 'stats/weapon_analysis.html', context)
 
 def stats_home(request):
@@ -162,9 +180,25 @@ def stats_home(request):
     ).order_by('-count')[:5]
     
     # most used weapons
-    popular_weapons = PlayerWeapon.objects.values('weapon__name').annotate(
-        count=Count('id')
-    ).order_by('-count')[:5]
+    # PlayerWeapon holds one snapshot row per GSI payload, so Count('id') ranked
+    # weapons by how long they were held, not how often they were used. Count the
+    # distinct (match, round, player) occurrences a weapon was actively equipped.
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT w.name AS weapon_name,
+                   COUNT(DISTINCT (pw.match_id, pw.round_number, pw.steam_account_id)) AS usage_count
+            FROM stats_playerweapon pw
+            JOIN stats_weapon w ON pw.weapon_id = w.weapon_id
+            WHERE pw.state = 'active'
+            GROUP BY w.name
+            ORDER BY usage_count DESC
+            LIMIT 5
+            """
+        )
+        popular_weapons = [
+            {'weapon__name': row[0], 'count': row[1]} for row in cursor.fetchall()
+        ]
     
     # recent matches
     recent_matches = Match.objects.order_by('-start_timestamp')[:10]

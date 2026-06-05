@@ -276,6 +276,55 @@
     </div>
 </div>
 
+<!-- Grenade impact (estimated) -->
+<div class="row">
+    <div class="col-12">
+        <div class="card stats-card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5>Grenade Impact</h5>
+                <span class="badge bg-warning text-dark">Estimated</span>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-secondary">
+                    CS2's Game State Integration provides no killfeed, so grenade kills
+                    are <strong>inferred</strong> from inventory and ammo changes: a kill is
+                    credited to a grenade only when one was thrown within its fuse/burn
+                    window and no shot was fired. A multi-kill in one tick is high confidence;
+                    a lone inferred kill is a softer estimate. Throws are tracked exactly.
+                </div>
+                {% if grenade_analysis %}
+                    <div class="table-responsive">
+                        <table class="table table-stats">
+                            <thead>
+                                <tr>
+                                    <th>Grenade</th>
+                                    <th>Thrown</th>
+                                    <th>Est. Kills</th>
+                                    <th>High-Confidence</th>
+                                    <th>Kills / Throw</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for g in grenade_analysis %}
+                                <tr>
+                                    <td>{{ g.grenade }}</td>
+                                    <td>{{ g.thrown }}</td>
+                                    <td>{{ g.est_kills }}</td>
+                                    <td>{{ g.high_conf_kills }}</td>
+                                    <td>{{ g.kills_per_throw|floatformat:2 }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <p class="text-center mb-0">No grenade data available yet. Play more matches with the GSI config installed to collect data.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Detailed weapon analysis -->
 <div class="row">
     <div class="col-12">

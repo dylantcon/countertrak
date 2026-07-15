@@ -1,0 +1,47 @@
+# countertrak production stack. replaces the old countertrak.service unit
+# (venv + run_servers.py) with two containers built from the same image.
+#
+# host networking on purpose: the containers see the exact same network the
+# venv processes did - nginx keeps proxying 127.0.0.1:8000/3000, and the
+# host postgres at localhost:5432 keeps working, with no pg_hba changes.
+# note that `ports:` mappings don't apply in host mode.
+#
+# config comes from backend/.env (root:www-data 0640 - compose runs as root
+# and reads it fine; it is never copied into the image).
+#
+# ops crib sheet:
+#   deploy code change:  sudo docker compose -f docker-compose.prod.yml up -d --build
+#   run migrations:      sudo docker compose -f docker-compose.prod.yml run --rm web python manage.py migrate
+#   tail logs:           sudo docker compose -f docker-compose.prod.yml logs -f
+#
+# the countertrak-watchdog.timer systemd unit probes both services from
+# outside docker and revives whatever stops answering.
+
+name: countertrak-prod
+
+services:
+  web:
+    build: ./backend
+    env_file: backend/.env
+    network_mode: host
+    command: python manage.py runserver --noreload 0.0.0.0:8000
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  gsi:
+    build: ./backend
+    env_file: backend/.env
+    network_mode: host
+    command: python -u gsi/async_server.py
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3000/status', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s

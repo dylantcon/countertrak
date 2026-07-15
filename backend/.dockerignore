@@ -1,0 +1,10 @@
+# never bake the real environment file (secrets, prod DB creds) into an image
+.env
+.env.*
+
+__pycache__/
+*.pyc
+*.log
+venv/
+Dockerfile
+.dockerignore

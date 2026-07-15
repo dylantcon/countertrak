@@ -29,4 +29,6 @@ venv/
 backend/.env
 **/__pycache__/
 *.pyc
-backend/.env
+
+# Docker demo environment (contains local-only creds)
+.env.docker

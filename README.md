@@ -21,6 +21,7 @@
 	- [Running the System](#Running-the-System)
 	- [GSI Ingestion Pipeline, End-to-End](#GSI-Ingestion-Pipeline-End-to-End)
 	- [Operations and Troubleshooting](#Operations-and-Troubleshooting)
+	- [Administering CounterTrak](#Administering-CounterTrak)
 - [Experiences and Challenges](#Experiences-and-Challenges)
 	- [Technical Challenges](#Technical-Challenges)
 	- [Lessons Learned](#Lessons-Learned)
@@ -381,13 +382,9 @@ To reset the database completely, `backend/wipeall.py` drops and recreates the `
 CounterTrak is two cooperating servers: the asynchronous GSI ingestion server (`backend/gsi/async_server.py`, default port `3000`) and the Django web/API server (`manage.py runserver`, port `8000`). Both are blocking event loops, so `backend/run_servers.py` launches each in its own subprocess and multiplexes their output to a common stream.
 
 - **Development:** `python backend/run_servers.py` from the repository root (with the venv active) starts both servers and tears them down cleanly on exit.
-- **Production:** the system runs under systemd as `countertrak.service` (`User=www-data`, `WorkingDirectory=` the repository root, `ExecStart=` the venv Python running `run_servers.py`). Manage it with the usual unit commands:
-```bash
-sudo systemctl restart countertrak.service   # apply changes to GSI Python code
-sudo systemctl status  countertrak.service
-sudo journalctl -u countertrak.service -f
-```
-A restart is required after editing any of the long-lived GSI modules (`async_server`, `match_manager`, `match_processor`, `payloadextractor`, `django_integration`), since those run inside the persistent process. It is **not** required after re-seeding reference data such as the Weapon table.
+- **Production:** the system runs as a pair of Docker containers defined in `docker-compose.prod.yml`, fronted by nginx and looked after by a systemd availability timer. Deploys, migrations, log access, and recovery for that stack are all covered in [Administering CounterTrak](#Administering-CounterTrak) below. (The original `countertrak.service` unit, which ran `run_servers.py` from the venv, is retired but kept on disk as a rollback path.)
+
+A redeploy is required after editing any of the long-lived GSI modules (`async_server`, `match_manager`, `match_processor`, `payloadextractor`, `django_integration`), since those run inside a persistent process. It is **not** required after re-seeding reference data such as the Weapon table.
 
 ### GSI Ingestion Pipeline, End-to-End
 The following traces a single weapon observation from the CS2 client to a persisted `stats_playerweapon` row, naming the function at each hop. This is the path to follow when weapon, kill, or round data is missing.
@@ -404,7 +401,54 @@ The single most important property to internalize is from step 4: **one database
 - **Logs.** Both servers log to `backend/countertrak.log` (and to stdout, captured by `journalctl` under systemd). The log lines are colorized with ANSI escape codes that are also written into the file, so view it with `less -R countertrak.log` and strip the codes (`sed 's/\x1b\[[0-9;]*m//g'`) before feeding it to tools that expect plain text.
 - **Symptom: `Unknown weapon` / `Created 0 weapon states`.** The `stats_weapon` table is empty or missing entries. Verify with a shell one-liner (`Weapon.objects.count()` should be `45`) and re-run `python manage.py load_weapons`. See [Database Initialization and Seeding](#Database-Initialization-and-Seeding).
 - **Symptom: the GSI server exits at startup before binding port 3000.** The logging subsystem opens `countertrak.log` eagerly at import time using a path relative to the working directory; if the `www-data` service user cannot write that file, the import raises and the process dies before it ever listens. Ensure `backend/countertrak.log` exists and is writable by `www-data`.
-- **Running database/management commands.** Always invoke them as the database-capable user, e.g. `sudo -u www-data /var/www/countertrak.dconn.dev/venv/bin/python manage.py <command>`, so that the `0640` `.env` is readable.
+- **Running database/management commands.** Always invoke them as the database-capable user, e.g. `sudo -u www-data /var/www/countertrak.dconn.dev/venv/bin/python manage.py <command>`, so that the `0640` `.env` is readable. In the containerized deployment, run them through compose instead - see [Administering CounterTrak](#Administering-CounterTrak).
+
+### Administering CounterTrak
+Everything an administrator touches funnels through three surfaces: the environment file, the container stack, and the Django admin. This subsection walks through each in roughly the order you meet them on a fresh deployment.
+
+#### Configuration
+`backend/.env` is the single source of configuration for both servers, and it stays on the host - the `.dockerignore` guarantees it is never baked into an image, and compose reads it at container start. The variables fall into four groups: identity (`SECRET_KEY`), safety (`DEBUG`, `ALLOWED_HOSTS`, `CSRF_TRUSTED_ORIGINS`), database (`DB_ENGINE`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`), and ingestion (`GSI_HOST`, `GSI_PORT`, `GSI_DEFAULT_AUTH_TOKEN`). `DEBUG` is parsed as a real boolean (`true`/`1`/`yes`, case-insensitive), so `DEBUG=False` genuinely disables debug mode - keep it that way anywhere the site is reachable, since debug pages leak settings and stack traces. `GSI_DEFAULT_AUTH_TOKEN` enables a shared fallback token for payload authentication; we ship with it commented out, because per-account tokens (issued automatically at [player onboarding](#Onboarding-a-player)) are strictly better.
+
+In the deployed environment `.env` is owned `root:www-data` with mode `0640`. Compose runs as root and reads it fine; your own shell will not, which is a feature.
+
+#### Running the stack
+Production is two containers - `web` (Django, port 8000) and `gsi` (the ingestion server, port 3000) - built from one image and defined in `docker-compose.prod.yml`. They use host networking, so nginx keeps proxying `127.0.0.1:8000/3000` and the host PostgreSQL keeps serving `localhost:5432`; the containers are deliberately invisible to the network layout. The day-to-day commands:
+
+```bash
+sudo docker compose -f docker-compose.prod.yml ps          # health at a glance
+sudo docker compose -f docker-compose.prod.yml logs -f     # tail both servers (add web/gsi to narrow)
+sudo docker compose -f docker-compose.prod.yml run --rm web python manage.py migrate
+sudo docker compose -f docker-compose.prod.yml run --rm web python manage.py <any-command>
+```
+
+Deploying a code change is a three-step ritual, because an availability watchdog would otherwise fight the restart:
+
+```bash
+sudo systemctl stop countertrak-watchdog.timer
+sudo docker compose -f docker-compose.prod.yml up -d --build
+sudo systemctl start countertrak-watchdog.timer
+```
+
+The watchdog (`deploy/countertrak-watchdog.sh`, installed as `countertrak-watchdog.timer`) probes both servers over loopback every 30 seconds, independently of Docker's own healthchecks. A service that fails two probes in a row gets revived - `up -d` if the container stopped, `restart` if it is running but wedged - and the whole story lands in `journalctl -u countertrak-watchdog.service`. Between the watchdog and the containers' `restart: unless-stopped` policy, the stack survives crashes and reboots without human help; if the watchdog reports a service still down after reviving it, that is your cue to read the logs.
+
+There is also a self-contained demo stack in `docker-compose.yml` (its own PostgreSQL, ports 8001/3001, config in `.env.docker`) for trying changes without touching production data.
+
+#### Bootstrapping the Django admin
+A fresh database has no administrator, so mint one:
+
+```bash
+sudo docker compose -f docker-compose.prod.yml run --rm web python manage.py createsuperuser
+```
+
+Then sign in at `/admin/`. From there you can manage users and their linked Steam accounts (including viewing or replacing `auth_token` values), inspect matches, rounds, and per-round state rows, and browse the seeded weapon reference table. The admin is also the fastest way to revoke a compromised GSI token: change or delete the offending `SteamAccount` row.
+
+#### Onboarding a player
+Players onboard themselves: they register at `/accounts/register/`, link a Steam account at `/accounts/link-steam/` (which auto-generates their personal GSI auth token), and download a ready-made `gamestate_integration` config from the profile page, which they drop into the game's `csgo/cfg/` directory. No administrator action is required.
+
+The one operational wrinkle worth knowing: the GSI server caches valid tokens in memory and refreshes from the database every 10 minutes, so a token created *by hand* (through the admin or a shell) may be rejected for up to 10 minutes unless you restart the ingestion server (`sudo docker compose -f docker-compose.prod.yml restart gsi`).
+
+#### Routine maintenance
+Re-seeding the weapon table (`load_weapons`) takes effect immediately, with no restart, as noted above. The production database is the *host* PostgreSQL, not a container, so existing backup habits apply unchanged (`pg_dump countertrak` as usual); the demo stack's database, by contrast, lives in the `pgdata` Docker volume and can be discarded with `docker compose down -v`. Should the container stack ever need to come off entirely, the rollback is one command each way: `sudo docker compose -f docker-compose.prod.yml down` followed by `sudo systemctl enable --now countertrak.service`.
 ## Experiences and Challenges
 ### Technical Challenges
 Throughout the development of CounterTrak, our team encountered and overcame several significant technical challenges:

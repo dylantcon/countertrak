@@ -1,0 +1,9 @@
+# installed to /etc/systemd/system/ - see deploy/countertrak-watchdog.sh
+[Unit]
+Description=CounterTrak availability watchdog (single probe run)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/var/www/countertrak.dconn.dev/deploy/countertrak-watchdog.sh

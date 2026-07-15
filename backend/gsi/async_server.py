@@ -40,6 +40,9 @@ class TokenCache:
     def __init__(self):
         # Dictionary mapping auth tokens to steam_ids
         self.tokens = {}
+        # Legacy fallback tokens live separately so DB-driven cache
+        # replacement in initialize()/refresh() can't drop them
+        self.legacy_tokens = {}
         # Last refresh timestamp
         self.last_refresh = 0
         # Refresh interval in seconds (10 minutes)
@@ -88,7 +91,7 @@ class TokenCache:
             await self.initialize()
         
         # Check if token exists in cache
-        if token in self.tokens:
+        if token in self.tokens or token in self.legacy_tokens:
             return True
         
         # If cache might be outdated, refresh and check again
@@ -112,8 +115,8 @@ class TokenCache:
         if not self.initialized:
             await self.initialize()
             
-        # Return steam_id from cache
-        return self.tokens.get(token)
+        # Return steam_id from cache, falling back to legacy tokens
+        return self.tokens.get(token) or self.legacy_tokens.get(token)
     
     async def refresh(self):
         """Refresh the token cache from the database."""
@@ -137,9 +140,9 @@ class TokenCache:
         Args:
             token: The legacy token to accept
         """
-        if token and token not in self.tokens:
+        if token and token not in self.legacy_tokens:
             async with self.lock:
-                self.tokens[token] = "LEGACY_TOKEN"
+                self.legacy_tokens[token] = "LEGACY_TOKEN"
                 logger.warning("Legacy fallback token registered - this should be phased out")
     
     @sync_to_async
@@ -345,8 +348,11 @@ async def main():
         # Create GSI server with no hardcoded auth token
         server = GSIServer(HOST, PORT)
         
-        # Handle legacy token for migration period
-        legacy_token = os.getenv('GSI_LEGACY_TOKEN')
+        # Handle legacy token for migration period - read the same setting
+        # the rest of the project defines (GSI_DEFAULT_AUTH_TOKEN), rather
+        # than a GSI_LEGACY_TOKEN env var nothing else knows about
+        from django.conf import settings
+        legacy_token = settings.GSI_DEFAULT_AUTH_TOKEN
         if legacy_token:
             logger.warning("Legacy fallback token configured - this should be phased out")
             await server.token_cache.register_legacy_token(legacy_token)

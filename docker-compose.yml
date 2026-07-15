@@ -1,0 +1,59 @@
+# countertrak, containerized: three services built from one image, plus postgres.
+#
+#   db      - postgres 16 with a named volume so match data survives restarts
+#   migrate - one-shot: runs django migrations (incl. the weapon seed in 0008),
+#             then exits; web and gsi wait for it to finish successfully
+#   web     - the django app, on host port 8001
+#   gsi     - the CS2 game state integration listener, on host port 3001
+#
+# host ports are bound to 127.0.0.1 and offset (+1) so this demo can't collide
+# with the live countertrak service on 8000/3000 or get exposed past nginx -
+# docker's port publishing bypasses the host firewall entirely.
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: countertrak
+      POSTGRES_USER: countertrak
+      POSTGRES_PASSWORD: countertrak-dev
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U countertrak -d countertrak"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  migrate:
+    build: ./backend
+    env_file: .env.docker
+    command: python manage.py migrate
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build: ./backend
+    env_file: .env.docker
+    # collectstatic pulls admin/DRF assets into STATIC_ROOT, which urls.py
+    # serves in debug; --nostatic keeps runserver from intercepting /static/
+    command: sh -c "python manage.py collectstatic --noinput && python manage.py runserver --nostatic 0.0.0.0:8000"
+    ports:
+      - "127.0.0.1:8001:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  gsi:
+    build: ./backend
+    env_file: .env.docker
+    command: python -u gsi/async_server.py
+    ports:
+      - "127.0.0.1:3001:3000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:
